@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,15 @@ class WslWatchState:
 
 
 class WslBridge:
+    _ENV_PASSTHROUGH_KEYS = (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "ZENMUX_API_KEY",
+        "ZENMUX_BASE_URL",
+        "CONTENT_INGESTION_ANALYSIS_MODEL",
+        "CONTENT_INGESTION_MULTIMODAL_MODEL",
+    )
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
@@ -58,9 +68,9 @@ class WslBridge:
         wsl_shared_root = self._to_wsl_path(shared_root_path)
         wsl_log_path = self._to_wsl_path(self.settings.wsl_watch_log_path)
         interval_value = f"{interval_seconds:g}"
-        script = "; ".join(
+        exports = self._build_exports(shared_root=shared_root_path)
+        exports.extend(
             [
-                f"export CONTENT_INGESTION_SHARED_INBOX_ROOT={self._shell_quote(wsl_shared_root)}",
                 f"cd {self._shell_quote(self.settings.wsl_project_root)}",
                 (
                     f"{self.settings.wsl_python_executable} main.py watch-inbox "
@@ -68,6 +78,7 @@ class WslBridge:
                 ),
             ]
         )
+        script = "; ".join(exports)
         process = subprocess.Popen(
             ["wsl.exe", "-e", "bash", "-lc", script],
             close_fds=True,
@@ -175,11 +186,7 @@ class WslBridge:
         check: bool = True,
         capture_label: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        exports = []
-        if shared_root is not None:
-            exports.append(
-                f"export CONTENT_INGESTION_SHARED_INBOX_ROOT={self._shell_quote(self._to_wsl_path(shared_root))}"
-            )
+        exports = self._build_exports(shared_root=shared_root)
         exports.append(f"cd {self._shell_quote(self.settings.wsl_project_root)}")
         exports.append(command)
         script = "; ".join(exports)
@@ -234,3 +241,15 @@ class WslBridge:
 
     def _shell_quote(self, value: str) -> str:
         return "'" + value.replace("'", "'\"'\"'") + "'"
+
+    def _build_exports(self, *, shared_root: Path | None) -> list[str]:
+        exports: list[str] = []
+        if shared_root is not None:
+            exports.append(
+                f"export CONTENT_INGESTION_SHARED_INBOX_ROOT={self._shell_quote(self._to_wsl_path(shared_root))}"
+            )
+        for key in self._ENV_PASSTHROUGH_KEYS:
+            value = os.environ.get(key)
+            if value:
+                exports.append(f"export {key}={self._shell_quote(value)}")
+        return exports

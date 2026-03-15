@@ -56,7 +56,7 @@ STAGE_LABELS = {
 
 RESULT_REFRESH_INTERVAL_SECONDS = 2.0
 AUTO_RESULT_POLL_INTERVAL_MS = 3000
-AUTO_RESULT_POLL_MAX_ATTEMPTS = 6
+AUTO_RESULT_POLL_MAX_ATTEMPTS = 20
 
 
 def _safe_domain(url: str) -> str:
@@ -142,8 +142,183 @@ def _preview_body(entry: ResultWorkspaceEntry) -> str:
     return json.dumps(entry.details, ensure_ascii=False, indent=2)
 
 
+def _structured_result_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
+    normalized = entry.details.get("normalized")
+    if not isinstance(normalized, dict):
+        return None
+    asset = normalized.get("asset")
+    if not isinstance(asset, dict):
+        return None
+    result = asset.get("result")
+    if not isinstance(result, dict):
+        return None
+    if not any(result.get(key) for key in ("summary", "key_points", "analysis_items", "verification_items", "synthesis")):
+        return None
+    return result
+
+
+def _llm_processing_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
+    normalized = entry.details.get("normalized")
+    if not isinstance(normalized, dict):
+        return None
+    metadata = normalized.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    llm_processing = metadata.get("llm_processing")
+    if not isinstance(llm_processing, dict):
+        return None
+    return llm_processing
+
+
+def _resolved_evidence_html(item: dict[str, object]) -> str:
+    evidence_refs = item.get("resolved_evidence")
+    if not isinstance(evidence_refs, list):
+        return ""
+    rendered: list[str] = []
+    for evidence in evidence_refs[:2]:
+        if not isinstance(evidence, dict):
+            continue
+        preview_text = str(evidence.get("preview_text") or "").strip()
+        if not preview_text:
+            continue
+        rendered.append(f"<li>{html.escape(preview_text)}</li>")
+    if not rendered:
+        return ""
+    return f"<ul class='evidence-list'>{''.join(rendered)}</ul>"
+
+
+def _structured_preview_html(entry: ResultWorkspaceEntry) -> str | None:
+    result = _structured_result_payload(entry)
+    if result is None:
+        return None
+
+    sections: list[str] = []
+    summary = result.get("summary")
+    if isinstance(summary, dict):
+        headline = str(summary.get("headline") or "").strip()
+        short_text = str(summary.get("short_text") or "").strip()
+        if headline or short_text:
+            sections.append(
+                "<section class='result-section result-hero'>"
+                f"<h2>{html.escape(headline or 'Summary')}</h2>"
+                f"<p>{html.escape(short_text or headline)}</p>"
+                "</section>"
+            )
+
+    def _render_cards(items: object, *, title: str, title_key: str, body_key: str) -> None:
+        if not isinstance(items, list) or not items:
+            return
+        cards: list[str] = []
+        for item in items[:3]:
+            if not isinstance(item, dict):
+                continue
+            card_title = str(item.get(title_key) or "").strip()
+            card_body = str(item.get(body_key) or "").strip()
+            if not card_title and not card_body:
+                continue
+            evidence_html = _resolved_evidence_html(item)
+            cards.append(
+                "<article class='result-card'>"
+                f"<h3>{html.escape(card_title or title)}</h3>"
+                f"<p>{html.escape(card_body or card_title)}</p>"
+                f"{evidence_html}"
+                "</article>"
+            )
+        if cards:
+            sections.append(
+                "<section class='result-section'>"
+                f"<h2>{html.escape(title)}</h2>"
+                f"<div class='result-grid'>{''.join(cards)}</div>"
+                "</section>"
+            )
+
+    _render_cards(result.get("key_points"), title="Key Points", title_key="title", body_key="details")
+    _render_cards(result.get("analysis_items"), title="Analysis", title_key="kind", body_key="statement")
+
+    verification_items = result.get("verification_items")
+    if isinstance(verification_items, list) and verification_items:
+        cards: list[str] = []
+        for item in verification_items[:3]:
+            if not isinstance(item, dict):
+                continue
+            claim = str(item.get("claim") or "").strip()
+            status = str(item.get("status") or "").strip() or "unclear"
+            rationale = str(item.get("rationale") or "").strip()
+            if not claim:
+                continue
+            cards.append(
+                "<article class='result-card verification-card'>"
+                f"<div class='status-chip status-{html.escape(status.lower())}'>{html.escape(status.title())}</div>"
+                f"<h3>{html.escape(claim)}</h3>"
+                f"<p>{html.escape(rationale or 'No rationale provided.')}</p>"
+                f"{_resolved_evidence_html(item)}"
+                "</article>"
+            )
+        if cards:
+            sections.append(
+                "<section class='result-section'>"
+                "<h2>Verification</h2>"
+                f"<div class='result-grid'>{''.join(cards)}</div>"
+                "</section>"
+            )
+
+    synthesis = result.get("synthesis")
+    if isinstance(synthesis, dict):
+        final_answer = str(synthesis.get("final_answer") or "").strip()
+        next_steps = synthesis.get("next_steps")
+        open_questions = synthesis.get("open_questions")
+        extras: list[str] = []
+        if isinstance(next_steps, list) and next_steps:
+            extras.append(
+                "<div><h3>Next Steps</h3><ul>"
+                + "".join(f"<li>{html.escape(str(step))}</li>" for step in next_steps[:3])
+                + "</ul></div>"
+            )
+        if isinstance(open_questions, list) and open_questions:
+            extras.append(
+                "<div><h3>Open Questions</h3><ul>"
+                + "".join(f"<li>{html.escape(str(question))}</li>" for question in open_questions[:3])
+                + "</ul></div>"
+            )
+        if final_answer or extras:
+            sections.append(
+                "<section class='result-section result-takeaway'>"
+                "<h2>Takeaway</h2>"
+                f"<p>{html.escape(final_answer)}</p>"
+                f"{''.join(extras)}"
+                "</section>"
+            )
+
+    warnings = result.get("warnings")
+    if isinstance(warnings, list) and warnings:
+        warning_items: list[str] = []
+        for item in warnings[:3]:
+            if not isinstance(item, dict):
+                continue
+            message = str(item.get("message") or "").strip()
+            severity = str(item.get("severity") or "").strip()
+            if not message:
+                continue
+            prefix = f"{severity.upper()}: " if severity else ""
+            warning_items.append(f"<li>{html.escape(prefix + message)}</li>")
+        if warning_items:
+            sections.append(
+                "<section class='result-section result-warnings'>"
+                "<h2>Warnings</h2>"
+                f"<ul>{''.join(warning_items)}</ul>"
+                "</section>"
+            )
+
+    if not sections:
+        return None
+    return f"<div class='preview-reading structured-result'>{''.join(sections)}</div>"
+
+
 def _preview_html(entry: ResultWorkspaceEntry) -> str:
     if entry.state == "processed":
+        structured_html = _structured_preview_html(entry)
+        if structured_html is not None:
+            return structured_html
         preview_text = _preview_body(entry)
         paragraphs = [part.strip() for part in preview_text.split("\n\n") if part.strip()]
         rendered = "".join(f"<p>{html.escape(part)}</p>" for part in paragraphs)
@@ -444,6 +619,76 @@ class ResultWorkspaceDialog(QDialog):
                 margin: 0 0 14px 0;
                 line-height: 1.7;
             }
+            .structured-result {
+                display: block;
+            }
+            .result-section {
+                margin: 0 0 22px 0;
+                padding: 0 0 18px 0;
+                border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+            }
+            .result-section:last-child {
+                margin-bottom: 0;
+                padding-bottom: 0;
+                border-bottom: none;
+            }
+            .result-section h2 {
+                margin: 0 0 10px 0;
+                font-size: 14px;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: #8f3f25;
+            }
+            .result-section h3 {
+                margin: 0 0 8px 0;
+                font-size: 16px;
+                color: #16202b;
+            }
+            .result-card {
+                margin: 0 0 14px 0;
+                padding: 14px 16px;
+                background: rgba(255, 255, 255, 0.76);
+                border: 1px solid rgba(172, 139, 108, 0.12);
+                border-radius: 16px;
+            }
+            .result-hero {
+                padding: 18px 20px;
+                background: linear-gradient(135deg, rgba(163, 75, 45, 0.08), rgba(22, 32, 43, 0.04));
+                border: 1px solid rgba(163, 75, 45, 0.14);
+                border-radius: 20px;
+            }
+            .result-takeaway {
+                padding: 18px 20px;
+                background: rgba(22, 32, 43, 0.04);
+                border: 1px solid rgba(22, 32, 43, 0.08);
+                border-radius: 20px;
+            }
+            .status-chip {
+                display: inline-block;
+                margin: 0 0 10px 0;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+            }
+            .status-supported {
+                background: rgba(22, 163, 74, 0.12);
+                color: #15803d;
+            }
+            .status-partial {
+                background: rgba(245, 158, 11, 0.14);
+                color: #b45309;
+            }
+            .status-unsupported, .status-unclear {
+                background: rgba(220, 38, 38, 0.10);
+                color: #b91c1c;
+            }
+            .evidence-list {
+                margin: 10px 0 0 0;
+                padding-left: 18px;
+                color: #475569;
+            }
             pre {
                 white-space: pre-wrap;
                 font-family: Consolas, 'Courier New', monospace;
@@ -587,6 +832,11 @@ class ResultWorkspaceDialog(QDialog):
 
     def _preview_hint(self, entry: ResultWorkspaceEntry) -> str:
         if entry.state == "processed":
+            if _structured_result_payload(entry) is not None:
+                return "Structured summary, analysis, and evidence from the latest WSL output."
+            llm_processing = _llm_processing_payload(entry)
+            if llm_processing is not None and str(llm_processing.get("status") or "") not in {"", "pass", "success"}:
+                return "WSL normalized this job, but the LLM stage did not attach a structured result."
             return "Reading extract from the normalized WSL output."
         if entry.state == "failed":
             return "Structured failure details from the WSL result directory."
@@ -1382,7 +1632,7 @@ class MainWindow(QMainWindow):
             self.open_result_button.hide()
             return "missing"
         if result_entry.state == "processed":
-            self.result_summary.setText("WSL processed this job. Open the result workspace to review it.")
+            self.result_summary.setText(result_entry.summary)
             self.open_result_button.setText("Open Result")
             self.open_result_button.show()
             self._latest_result_entry = result_entry
@@ -1409,6 +1659,9 @@ class MainWindow(QMainWindow):
             return
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
         ResultWorkspaceDialog(parent=self, shared_root=shared_root, selected_job_id=result_entry.job_id).exec()
+        refreshed_state = self._refresh_current_job_result()
+        if refreshed_state not in {"processed", "failed", "unavailable"}:
+            self._start_result_polling()
 
     def _set_meta_grid_visible(self, visible: bool) -> None:
         for index in range(self.meta_grid.count()):

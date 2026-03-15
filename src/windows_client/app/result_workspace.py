@@ -86,11 +86,18 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
     normalized = _read_json_file(normalized_json_path)
     asset = normalized.get("asset", {})
     status = _read_json_file(status_path)
+    metadata = _coerce_dict(normalized.get("metadata"))
+    llm_processing = _coerce_dict(metadata.get("llm_processing"))
+    structured_result = _coerce_dict(asset.get("result"))
 
     preview_text = _build_processed_preview(normalized_md_path)
-    summary = "WSL processed this job successfully."
-    if preview_text is None and normalized_md_path.exists():
-        summary = "WSL processed this job, but the normalized preview text looks unreadable."
+    summary = _build_processed_summary(
+        asset=asset,
+        structured_result=structured_result,
+        llm_processing=llm_processing,
+        preview_text=preview_text,
+        markdown_exists=normalized_md_path.exists(),
+    )
 
     return ResultWorkspaceEntry(
         job_id=str(normalized.get("job_id") or job_dir.name),
@@ -114,6 +121,8 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
             "normalized": normalized,
             "status": status,
             "metadata": _read_json_file(metadata_path) if metadata_path.exists() else {},
+            "llm_processing": llm_processing,
+            "structured_result": structured_result,
         },
     )
 
@@ -228,6 +237,36 @@ def _build_processed_preview(path: Path) -> str | None:
     return preview[:900]
 
 
+def _build_processed_summary(
+    *,
+    asset: dict[str, Any],
+    structured_result: dict[str, Any],
+    llm_processing: dict[str, Any],
+    preview_text: str | None,
+    markdown_exists: bool,
+) -> str:
+    summary_payload = _coerce_dict(structured_result.get("summary"))
+    summary_headline = _coerce_str(summary_payload.get("headline"))
+    summary_short_text = _coerce_str(summary_payload.get("short_text"))
+    if summary_headline and summary_short_text and summary_short_text != summary_headline:
+        return f"{summary_headline}: {summary_short_text}"
+    if summary_short_text:
+        return summary_short_text
+    if summary_headline:
+        return summary_headline
+
+    asset_summary = _coerce_str(asset.get("summary"))
+    if asset_summary:
+        return asset_summary
+
+    llm_status = _coerce_str(llm_processing.get("status"))
+    if llm_status and llm_status not in {"pass", "success"}:
+        return "WSL normalized this job, but the LLM stage did not produce a structured result."
+    if preview_text is None and markdown_exists:
+        return "WSL processed this job, but the normalized preview text looks unreadable."
+    return "WSL processed this job successfully."
+
+
 def _extract_preview_paragraphs(text: str) -> list[str]:
     cleaned = text.replace("\r\n", "\n").strip()
     if not cleaned:
@@ -288,3 +327,9 @@ def _coerce_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _coerce_dict(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}

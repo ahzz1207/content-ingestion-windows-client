@@ -12,7 +12,7 @@ if str(SRC_DIR) not in sys.path:
 from PySide6.QtWidgets import QApplication
 
 from windows_client.app.view_models import DoctorSnapshot, JobExportSnapshot, OperationViewState
-from windows_client.gui.main_window import MainWindow
+from windows_client.gui.main_window import MainWindow, _preview_html
 
 
 class MainWindowTests(unittest.TestCase):
@@ -50,11 +50,11 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window._latest_result_entry.state, "processed")
         self.assertFalse(self.window._result_poll_timer.isActive())
-        self.assertEqual(self.window.result_summary.text(), "WSL processed this job. Open the result workspace to review it.")
+        self.assertEqual(self.window.result_summary.text(), "Structured summary from WSL.")
 
     def test_poll_times_out_with_stable_message(self) -> None:
         with patch("windows_client.gui.main_window.load_job_result", return_value=None):
-            for _ in range(6):
+            for _ in range(20):
                 self.window._poll_current_job_result()
 
         self.assertIn("check again later", self.window.result_summary.text())
@@ -93,6 +93,58 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window._selected_video_download_mode(route), "video")
 
+    def test_preview_html_prefers_structured_result_sections(self) -> None:
+        entry = _processed_entry("job-structured")
+        entry.details = {
+            "normalized": {
+                "asset": {
+                    "result": {
+                        "summary": {"headline": "Signal", "short_text": "Structured summary from WSL."},
+                        "key_points": [
+                            {
+                                "id": "kp-1",
+                                "title": "Point one",
+                                "details": "First key point.",
+                                "resolved_evidence": [{"preview_text": "Evidence excerpt"}],
+                            }
+                        ],
+                        "verification_items": [
+                            {
+                                "id": "vf-1",
+                                "claim": "Claim one",
+                                "status": "supported",
+                                "rationale": "Evidence matches the claim.",
+                                "resolved_evidence": [{"preview_text": "Transcript line"}],
+                            }
+                        ],
+                    }
+                },
+                "metadata": {"llm_processing": {"status": "pass"}},
+            }
+        }
+
+        rendered = _preview_html(entry)
+
+        self.assertIn("Structured summary from WSL.", rendered)
+        self.assertIn("Point one", rendered)
+        self.assertIn("Claim one", rendered)
+        self.assertIn("Evidence excerpt", rendered)
+
+    def test_open_current_job_result_refreshes_status_after_workspace_closes(self) -> None:
+        self.window._latest_result_entry = _Entry(job_id="job-123", state="processing", summary="WSL is still processing this job.")
+        with (
+            patch("windows_client.gui.main_window.ResultWorkspaceDialog") as dialog_cls,
+            patch(
+                "windows_client.gui.main_window.load_job_result",
+                side_effect=[_processed_entry("job-123")],
+            ),
+        ):
+            dialog_cls.return_value.exec.return_value = 0
+            self.window._open_current_job_result()
+
+        self.assertEqual(self.window.result_summary.text(), "Structured summary from WSL.")
+        self.assertEqual(self.window._latest_result_entry.state, "processed")
+
 
 class _FakeWorkflow:
     def __init__(self, shared_root: Path) -> None:
@@ -125,10 +177,10 @@ class _FakeSettings:
 
 
 class _Entry:
-    def __init__(self, *, job_id: str, state: str) -> None:
+    def __init__(self, *, job_id: str, state: str, summary: str = "Structured summary from WSL.") -> None:
         self.job_id = job_id
         self.state = state
-        self.summary = "WSL processed this job successfully."
+        self.summary = summary
         self.job_dir = Path(".")
         self.source_url = None
         self.title = None

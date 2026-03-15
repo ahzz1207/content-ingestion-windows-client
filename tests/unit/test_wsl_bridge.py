@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -74,3 +75,21 @@ class WslBridgeTests(unittest.TestCase):
         loaded = self.bridge._read_watch_state()
 
         self.assertEqual(loaded, state)
+
+    def test_build_exports_includes_llm_env_when_present(self) -> None:
+        shared_root = self.project_root / "data" / "shared_inbox"
+        with patch.dict(
+            os.environ,
+            {
+                "ZENMUX_API_KEY": "secret-key",
+                "ZENMUX_BASE_URL": "https://zenmux.ai/api/v1",
+                "CONTENT_INGESTION_ANALYSIS_MODEL": "openai/gpt-5",
+            },
+            clear=False,
+        ):
+            exports = self.bridge._build_exports(shared_root=shared_root)
+
+        self.assertTrue(any("CONTENT_INGESTION_SHARED_INBOX_ROOT" in item for item in exports))
+        self.assertTrue(any("ZENMUX_API_KEY" in item for item in exports))
+        self.assertTrue(any("ZENMUX_BASE_URL" in item for item in exports))
+        self.assertTrue(any("CONTENT_INGESTION_ANALYSIS_MODEL" in item for item in exports))

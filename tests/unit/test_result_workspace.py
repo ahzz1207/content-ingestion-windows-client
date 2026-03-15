@@ -42,6 +42,17 @@ class ResultWorkspaceTests(unittest.TestCase):
                         "title": "Example title",
                         "author": "Example author",
                         "published_at": "2026-03-14T12:00:00",
+                        "result": {
+                            "summary": {
+                                "headline": "Core takeaway",
+                                "short_text": "A concise structured summary.",
+                            }
+                        },
+                    },
+                    "metadata": {
+                        "llm_processing": {
+                            "status": "pass",
+                        }
                     },
                 }
             ),
@@ -60,6 +71,7 @@ class ResultWorkspaceTests(unittest.TestCase):
         self.assertEqual(result.state, "processed")
         self.assertEqual(result.title, "Example title")
         self.assertEqual(result.author, "Example author")
+        self.assertEqual(result.summary, "Core takeaway: A concise structured summary.")
         self.assertEqual(result.preview_text, "First paragraph.\n\nSecond paragraph.")
 
     def test_load_failed_job_result(self) -> None:
@@ -172,6 +184,29 @@ class ResultWorkspaceTests(unittest.TestCase):
         assert result is not None
         self.assertIsNone(result.preview_text)
         self.assertIn("looks unreadable", result.summary)
+
+    def test_processed_result_reports_missing_llm_output(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-no-llm"
+        job_dir.mkdir()
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-no-llm"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-no-llm",
+                    "asset": {},
+                    "metadata": {"llm_processing": {"status": "skipped"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job_dir / "normalized.md").write_text("# Title\n\n- Platform: generic\n\n---\n\nBody", encoding="utf-8")
+        (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        result = load_job_result(self.shared_root, "job-no-llm")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("LLM stage", result.summary)
 
 
 if __name__ == "__main__":

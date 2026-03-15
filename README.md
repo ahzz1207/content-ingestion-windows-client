@@ -21,6 +21,7 @@ The primary alignment document for this repository is:
 - `docs/full-chain-check-2026-03-14.md`
 - `docs/phase1-usable-release-2026-03-14.md`
 - `docs/phase1-handoff-2026-03-15.md`
+- `docs/round2-handoff-2026-03-16.md`
 - `docs/cross-review-2026-03-14.md` for internal review history and cross-check notes; it is background material, not required reading
 - `docs/windows-wsl-handoff-contract.md`
 - `docs/windows-wsl-roundtrip.md`
@@ -49,6 +50,8 @@ Current implementation status:
 - mock export, real URL export, browser export, and real WeChat article export have all been validated against the WSL processor
 - a first PySide6 GUI shell now exists for URL input, auto routing, login guidance, progress state, and success/failure presentation
 - the GUI now includes a first result-workspace entry for browsing recent WSL states from `incoming/`, `processing/`, `processed/`, and `failed/`
+- the result workspace now prefers structured WSL output when available, including summary, key points, analysis, verification, and warnings
+- the WSL bridge now forwards supported LLM environment variables into watcher and one-shot WSL commands
 
 Quick commands:
 
