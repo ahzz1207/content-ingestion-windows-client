@@ -1,0 +1,48 @@
+# Python caches and virtualenvs
+__pycache__/
+.pytest_cache/
+.venv/
+*.py[cod]
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Logs and temp output
+*.log
+*.tmp
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# App runtime data
+apps/windows-client/data/
+apps/content-ingestion/data/
+
+# Browser profiles and session state
+apps/windows-client/data/browser-profiles/
+apps/windows-client/playwright/.auth/
+
+# Shared inbox runtime data
+apps/windows-client/data/shared_inbox/
+apps/content-ingestion/data/shared_inbox/
+
+# Processed artifacts and media outputs
+apps/windows-client/outputs/
+apps/content-ingestion/outputs/
+
+# Local environment files
+.env
+.env.*
+
+# Test and coverage artifacts
+.coverage
+htmlcov/
+
+# Playwright/browser downloads if kept local
+ms-playwright/
+
+# Node artifacts if introduced later
+node_modules/
