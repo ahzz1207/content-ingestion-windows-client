@@ -22,6 +22,9 @@ The primary alignment document for this repository is:
 - `docs/phase1-usable-release-2026-03-14.md`
 - `docs/phase1-handoff-2026-03-15.md`
 - `docs/round2-handoff-2026-03-16.md`
+- `docs/code-review-followup-2026-03-16.md`
+- `docs/obsidian-integration-roadmap-2026-03-16.md`
+- `docs/gui-vision-2026-03-16.md`
 - `docs/cross-review-2026-03-14.md` for internal review history and cross-check notes; it is background material, not required reading
 - `docs/windows-wsl-handoff-contract.md`
 - `docs/windows-wsl-roundtrip.md`
