@@ -23,6 +23,10 @@ The primary alignment document for this repository is:
 - `docs/phase1-handoff-2026-03-15.md`
 - `docs/round2-handoff-2026-03-16.md`
 - `docs/code-review-followup-2026-03-16.md`
+- `docs/executable-plan-2026-03-16.md`
+- `docs/project-plan-review-2026-03-16.md`
+- `docs/project-plan-revised-2026-03-16.md`
+- `docs/visual-design-spec-revised-2026-03-16.md`
 - `docs/obsidian-integration-roadmap-2026-03-16.md`
 - `docs/gui-vision-2026-03-16.md`
 - `docs/cross-review-2026-03-14.md` for internal review history and cross-check notes; it is background material, not required reading
