@@ -353,3 +353,110 @@ And the first implementation pass should focus on:
 3. result workspace reading hierarchy
 
 If this direction holds up in practice, it will align much better with the project's long-term Obsidian and knowledge-management ambition than the previous high-contrast black-red approach.
+
+这个文档方向很好，我有几点建议：
+
+  ---
+  认同的部分
+
+  "Content is the hero" 和 "Reading first, operations second"
+  是非常正确的判断。这个工具的终态是知识加工，不是运维面板。把结果阅读体验放在最
+  高优先级，比炫酷的终端风格更有长期价值。
+
+  "Notes/briefs/dossiers" 的隐喻 也比 "dashboard" 好得多。用户打开这个工具的心智
+  模型应该是"我来看看今天采集到了什么"，而不是"我来检查系统状态"。
+
+  ---
+  建议调整的部分
+
+  1. 色板：暖色调方向对了，但 copper accent 需要谨慎
+
+  #C96A3D (copper) 和 #D08E43 (amber) 作为 accent 色，情绪是对的——沉稳、有质感、
+  不刺眼。但在暗色背景上，橙铜色系的可用状态色空间会很窄：
+
+  - Success 绿、Error 红、Warning 黄 都是常用状态色
+  - Copper/Amber 和 Warning 黄太接近，容易混淆语义
+  - 在 PySide6 的 QSS 里精确控制这种微妙的暖色对比度会比较痛苦
+
+  建议： 保留暖色方向，但把 accent 稍微拉向更独特的位置。两个备选：
+
+  Option A: 暖金偏灰  #B8956A  — 更克制，像旧书脊的烫金
+  Option B: 砖红偏棕  #A65D4E  — 更沉，像皮革封面
+
+  或者保持 copper #C96A3D 作为 accent，但把它只用于主 CTA 和选中态，不用于
+  warning，避免语义冲突。
+
+  2. 缺少的一环：三字体方案仍然值得保留
+
+  文档没提到字体策略。在 PySide6 里也完全可以做三字体分层：
+
+  # QSS 或 setFont() 里区分
+  FONT_UI    = QFont("Inter", 13)        # 界面元素
+  FONT_MONO  = QFont("JetBrains Mono", 12)  # URL、job ID、日志
+  FONT_SERIF = QFont("Source Han Serif SC", 20)  # 结果页标题
+
+  这对"editorial"气质的加成非常大。一个纯 sans-serif
+  的界面看起来像工具，加入衬线标题后立刻有了"杂志/简报"的感觉。
+
+  3. Phase C 的"briefing structure"需要更具体的层级定义
+
+  文档说 "Rebuild result hierarchy around briefing/summary/evidence
+  structure"，这是最关键的一步。建议明确定义信息层级：
+
+  Layer 1 (Hero):    标题 (serif, 大字)  +  状态 badge
+  Layer 2 (Glance):  一句话摘要  +  tags  +  来源/作者/日期
+  Layer 3 (Brief):   核心观点列表 (3-7 条，带编号)
+  Layer 4 (Evidence): 事实验证表  +  反驳分析
+  Layer 5 (Deep):    原文预览  +  延伸阅读  +  技术元数据
+
+  Layer 1-2 是用户打开后 0.5 秒内 要看到的。Layer 3 是 扫一眼 要掌握的。Layer
+  4-5 是 想深入 才展开的。
+
+  这个层级在 PySide6 里可以用 QScrollArea + 折叠面板实现，不需要复杂框架。
+
+  4. 建议补充：Command Palette 在 PySide6 里也能做
+
+  不需要 Tauri/React 才能做 Command Palette。PySide6 里就是一个 QDialog +
+  QLineEdit + QListWidget：
+
+  ⌘K → 弹出浮层 → 输入过滤 → 回车执行
+
+  这个交互模式的价值是减少界面上的按钮和入口，让主界面更干净，更符合"calm over
+  aggression"原则。建议加入 Phase B 或 Phase C。
+
+  5. 关于"不做 Tauri 重写"的节奏建议
+
+  完全同意先用 PySide6 迭代功能。但建议在 PySide6 的实现中有意识地做好分层：
+
+  view layer    (QWidget, QSS)     ← 未来替换为 React
+  ─────────────────────────────────
+  view model    (dataclass/dict)   ← 保持不变
+  ─────────────────────────────────
+  service layer (workflow.py)      ← 保持不变
+
+  这样等功能稳定后，Tauri 重写只需要替换 view
+  layer，下面两层原封不动搬过来。现在 workflow.py 和 view_models.py
+  已经做了这个分离，继续保持就好。
+
+  ---
+  总结
+
+  ┌────────────────────────┬────────────────────────────────────────────────┐
+  │       Codex 方案       │                    我的建议                    │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Copper/Amber accent    │ 保留，但严格限定用途，和 warning               │
+  │                        │ 状态色拉开距离                                 │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 未提字体               │ 加入三字体方案 (sans + mono + serif)           │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Briefing structure     │ 定义明确的 5 层信息层级                        │
+  │ (Phase C)              │                                                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 未提 Command Palette   │ 在 PySide6 里也做，放 Phase B/C                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ PySide6 only           │ 同意，但保持 view/viewmodel/service            │
+  │                        │ 三层分离为未来迁移铺路                         │
+  └────────────────────────┴────────────────────────────────────────────────┘
+
+  整体方向是对的。"Editorial Intelligence Workspace" 这个定位比我之前的
+  "Obsidian Terminal" 更适合这个产品的长期身份——毕竟用户要的是知识，不是终端
