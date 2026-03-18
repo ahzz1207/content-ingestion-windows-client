@@ -10,6 +10,7 @@ from windows_client.collector.base import CollectedArtifact, Collector
 from windows_client.collector.browser import BrowserCollectOptions, BrowserLoginOptions
 from windows_client.collector.html_capture_artifacts import build_html_capture_artifacts
 from windows_client.collector.html_metadata import HtmlMetadataHints, build_video_summary_payload, detect_platform
+from windows_client.collector.wechat_assets import build_wechat_article_artifacts
 from windows_client.config.settings import Settings
 from windows_client.job_exporter.exporter import JobExporter
 from windows_client.job_exporter.models import ExportRequest, ExportResult
@@ -56,6 +57,11 @@ class WindowsClientService:
         yield f"video_downloader_reason={self.video_downloader.availability_reason() if self.video_downloader else 'not_configured'}"
         yield f"ffmpeg_available={self.video_downloader.ffmpeg_available() if self.video_downloader else False}"
         yield f"video_js_runtime={(self.video_downloader.js_runtime() if self.video_downloader else None) or 'none'}"
+        yield f"wsl_llm_credentials_available={self.settings.llm_credentials_available}"
+        yield f"wsl_llm_provider_hint={self.settings.llm_provider_hint}"
+        yield f"wsl_analysis_model_override={self.settings.analysis_model_override or 'default'}"
+        yield f"wsl_multimodal_model_override={self.settings.multimodal_model_override or 'default'}"
+        yield f"wsl_whisper_model_override={self.settings.whisper_model_override or 'default'}"
 
     def export_mock_job(
         self,
@@ -97,6 +103,7 @@ class WindowsClientService:
 
         self._emit_progress(on_progress, "collecting")
         payload = self.url_collector.collect(url, content_type=content_type, platform=resolved_platform)
+        payload = self._attach_wechat_images(payload, url=url)
         payload, cleanup_dir = self._attach_video_download(
             payload,
             url=url,
@@ -157,6 +164,7 @@ class WindowsClientService:
             platform=resolved_platform,
             options=options,
         )
+        payload = self._attach_wechat_images(payload, url=url)
         payload, cleanup_dir = self._attach_video_download(
             payload,
             url=url,
@@ -267,6 +275,19 @@ class WindowsClientService:
         if cleanup_dir is None:
             return
         shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+    def _attach_wechat_images(self, payload, *, url: str):
+        if payload.platform != "wechat" or payload.content_type != "html":
+            return payload
+        annotated_html, artifacts = build_wechat_article_artifacts(
+            payload.payload_text,
+            base_url=payload.final_url or url,
+        )
+        if not artifacts:
+            return payload
+        payload.payload_text = annotated_html
+        payload.artifacts = tuple(payload.artifacts) + tuple(artifacts)
+        return payload
 
     def _refresh_video_payload(self, payload, *, url: str, description_hint: str | None) -> None:
         if payload.content_type != "html":

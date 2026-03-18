@@ -84,6 +84,7 @@ class WslBridgeTests(unittest.TestCase):
                 "ZENMUX_API_KEY": "secret-key",
                 "ZENMUX_BASE_URL": "https://zenmux.ai/api/v1",
                 "CONTENT_INGESTION_ANALYSIS_MODEL": "openai/gpt-5",
+                "CONTENT_INGESTION_WHISPER_MODEL": "large-v3",
             },
             clear=False,
         ):
@@ -93,3 +94,4 @@ class WslBridgeTests(unittest.TestCase):
         self.assertTrue(any("ZENMUX_API_KEY" in item for item in exports))
         self.assertTrue(any("ZENMUX_BASE_URL" in item for item in exports))
         self.assertTrue(any("CONTENT_INGESTION_ANALYSIS_MODEL" in item for item in exports))
+        self.assertTrue(any("CONTENT_INGESTION_WHISPER_MODEL" in item for item in exports))

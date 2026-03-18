@@ -53,6 +53,9 @@ class WindowsClientServiceTests(unittest.TestCase):
         self.assertIn("video_downloader_available=False", lines)
         self.assertIn("video_downloader_reason=not_configured", lines)
         self.assertIn("video_js_runtime=none", lines)
+        self.assertIn("wsl_llm_credentials_available=False", lines)
+        self.assertIn("wsl_llm_provider_hint=missing", lines)
+        self.assertIn("wsl_whisper_model_override=default", lines)
 
     def test_export_mock_job_uses_settings_defaults(self) -> None:
         service = WindowsClientService(
@@ -193,6 +196,42 @@ class WindowsClientServiceTests(unittest.TestCase):
         self.assertIn('"wait_for_selector_state": "attached"', metadata)
         self.assertIn('"final_url": "https://mp.weixin.qq.com/s/final-demo"', metadata)
         mock_collector.default_profile_slug.assert_called_once_with("https://mp.weixin.qq.com/s/demo")
+
+    @patch("windows_client.app.service.build_wechat_article_artifacts")
+    def test_export_url_job_attaches_wechat_images_and_markers(self, build_wechat_article_artifacts) -> None:
+        build_wechat_article_artifacts.return_value = (
+            "<html><body><p>[WeChat image 1] https://cdn.example.com/chart.png</p></body></html>",
+            (
+                CollectedArtifact(
+                    relative_path="attachments/source/wechat-images/chart.png",
+                    media_type="image/png",
+                    role="image_attachment",
+                    content=b"png-bytes",
+                ),
+            ),
+        )
+        url_collector = MagicMock()
+        url_collector.collect.return_value = CollectedPayload(
+            source_url="https://mp.weixin.qq.com/s/demo",
+            content_type="html",
+            payload_text="<html><body><img src='https://cdn.example.com/chart.png'></body></html>",
+            final_url="https://mp.weixin.qq.com/s/demo",
+            platform="wechat",
+            content_shape="article",
+        )
+        service = WindowsClientService(
+            settings=Settings(project_root=self.project_root),
+            mock_collector=MockCollector(),
+            url_collector=url_collector,
+            browser_collector=MagicMock(),
+            exporter=JobExporter(settings=Settings(project_root=self.project_root)),
+        )
+
+        result = service.export_url_job(url="https://mp.weixin.qq.com/s/demo")
+
+        self.assertIn("[WeChat image 1]", result.payload_path.read_text(encoding="utf-8"))
+        self.assertTrue((result.job_dir / "attachments" / "source" / "wechat-images" / "chart.png").exists())
+        build_wechat_article_artifacts.assert_called_once()
 
     def test_export_browser_job_keeps_generic_urls_ephemeral_by_default(self) -> None:
         mock_collector = MagicMock()

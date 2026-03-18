@@ -11,6 +11,7 @@ from typing import Any
 class ResultWorkspaceEntry:
     job_id: str
     state: str
+    analysis_state: str | None
     updated_at: float
     job_dir: Path | None
     source_url: str | None
@@ -22,6 +23,7 @@ class ResultWorkspaceEntry:
     summary: str
     preview_text: str | None
     metadata_path: Path | None
+    analysis_json_path: Path | None
     normalized_json_path: Path | None
     normalized_md_path: Path | None
     status_path: Path | None
@@ -84,17 +86,20 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
     normalized_md_path = job_dir / "normalized.md"
     status_path = job_dir / "status.json"
     normalized = _read_json_file(normalized_json_path)
-    asset = normalized.get("asset", {})
+    asset = _coerce_dict(normalized.get("asset"))
     status = _read_json_file(status_path)
-    metadata = _coerce_dict(normalized.get("metadata"))
+    metadata = _resolve_processed_metadata(normalized, asset)
     llm_processing = _coerce_dict(metadata.get("llm_processing"))
     structured_result = _coerce_dict(asset.get("result"))
+    analysis_json_path = _resolve_analysis_json_path(job_dir, llm_processing)
+    analysis_state = _derive_analysis_state(structured_result=structured_result, llm_processing=llm_processing)
 
     preview_text = _build_processed_preview(normalized_md_path)
     summary = _build_processed_summary(
         asset=asset,
         structured_result=structured_result,
         llm_processing=llm_processing,
+        analysis_state=analysis_state,
         preview_text=preview_text,
         markdown_exists=normalized_md_path.exists(),
     )
@@ -102,6 +107,7 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
     return ResultWorkspaceEntry(
         job_id=str(normalized.get("job_id") or job_dir.name),
         state="processed",
+        analysis_state=analysis_state,
         updated_at=job_dir.stat().st_mtime,
         job_dir=job_dir,
         source_url=_coerce_str(asset.get("source_url")),
@@ -113,6 +119,7 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
         summary=summary,
         preview_text=preview_text,
         metadata_path=metadata_path if metadata_path.exists() else None,
+        analysis_json_path=analysis_json_path,
         normalized_json_path=normalized_json_path if normalized_json_path.exists() else None,
         normalized_md_path=normalized_md_path if normalized_md_path.exists() else None,
         status_path=status_path if status_path.exists() else None,
@@ -137,6 +144,7 @@ def _load_failed_result(job_dir: Path) -> ResultWorkspaceEntry:
     return ResultWorkspaceEntry(
         job_id=str(metadata.get("job_id") or job_dir.name),
         state="failed",
+        analysis_state="failed",
         updated_at=job_dir.stat().st_mtime,
         job_dir=job_dir,
         source_url=_coerce_str(metadata.get("source_url")),
@@ -148,6 +156,7 @@ def _load_failed_result(job_dir: Path) -> ResultWorkspaceEntry:
         summary=_coerce_str(error.get("error_message")) or "WSL failed to process this job.",
         preview_text=None,
         metadata_path=metadata_path if metadata_path.exists() else None,
+        analysis_json_path=None,
         normalized_json_path=None,
         normalized_md_path=None,
         status_path=status_path if status_path.exists() else None,
@@ -166,6 +175,7 @@ def _load_processing_result(job_dir: Path) -> ResultWorkspaceEntry:
     return ResultWorkspaceEntry(
         job_id=str(metadata.get("job_id") or job_dir.name),
         state="processing",
+        analysis_state="processing",
         updated_at=job_dir.stat().st_mtime,
         job_dir=job_dir,
         source_url=_coerce_str(metadata.get("source_url")),
@@ -177,6 +187,7 @@ def _load_processing_result(job_dir: Path) -> ResultWorkspaceEntry:
         summary="WSL is still processing this job.",
         preview_text=None,
         metadata_path=metadata_path if metadata_path.exists() else None,
+        analysis_json_path=None,
         normalized_json_path=None,
         normalized_md_path=None,
         status_path=None,
@@ -191,6 +202,7 @@ def _load_pending_result(job_dir: Path) -> ResultWorkspaceEntry:
     return ResultWorkspaceEntry(
         job_id=str(metadata.get("job_id") or job_dir.name),
         state="pending",
+        analysis_state="pending",
         updated_at=job_dir.stat().st_mtime,
         job_dir=job_dir,
         source_url=_coerce_str(metadata.get("source_url")),
@@ -202,6 +214,7 @@ def _load_pending_result(job_dir: Path) -> ResultWorkspaceEntry:
         summary="The job is waiting for the WSL watcher.",
         preview_text=None,
         metadata_path=metadata_path if metadata_path.exists() else None,
+        analysis_json_path=None,
         normalized_json_path=None,
         normalized_md_path=None,
         status_path=None,
@@ -242,6 +255,7 @@ def _build_processed_summary(
     asset: dict[str, Any],
     structured_result: dict[str, Any],
     llm_processing: dict[str, Any],
+    analysis_state: str | None,
     preview_text: str | None,
     markdown_exists: bool,
 ) -> str:
@@ -259,12 +273,57 @@ def _build_processed_summary(
     if asset_summary:
         return asset_summary
 
-    llm_status = _coerce_str(llm_processing.get("status"))
-    if llm_status and llm_status not in {"pass", "success"}:
-        return "WSL normalized this job, but the LLM stage did not produce a structured result."
     if preview_text is None and markdown_exists:
         return "WSL processed this job, but the normalized preview text looks unreadable."
+    if analysis_state == "skipped":
+        skip_reason = _format_skip_reason(llm_processing)
+        return f"WSL normalized this job, but analysis was skipped{skip_reason}."
+    if analysis_state == "failed":
+        return "WSL normalized this job, but analysis failed before a structured result was written."
+    if analysis_state == "normalized_only":
+        return "WSL normalized this job, but the LLM stage did not produce a structured result."
     return "WSL processed this job successfully."
+
+
+def _resolve_processed_metadata(normalized: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:
+    asset_metadata = _coerce_dict(asset.get("metadata"))
+    if asset_metadata:
+        return asset_metadata
+    return _coerce_dict(normalized.get("metadata"))
+
+
+def _resolve_analysis_json_path(job_dir: Path, llm_processing: dict[str, Any]) -> Path | None:
+    output_path = _coerce_str(llm_processing.get("output_path"))
+    if output_path:
+        candidate = Path(output_path)
+        if not candidate.is_absolute():
+            candidate = job_dir / output_path
+        if candidate.exists():
+            return candidate
+    candidate = job_dir / "analysis" / "llm" / "analysis_result.json"
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _derive_analysis_state(*, structured_result: dict[str, Any], llm_processing: dict[str, Any]) -> str:
+    if structured_result:
+        return "ready"
+    llm_status = (_coerce_str(llm_processing.get("status")) or "").lower()
+    if llm_status in {"pass", "success"}:
+        return "normalized_only"
+    if llm_status == "skipped":
+        return "skipped"
+    if llm_status in {"failed", "error"}:
+        return "failed"
+    return "normalized_only"
+
+
+def _format_skip_reason(llm_processing: dict[str, Any]) -> str:
+    skip_reason = _coerce_str(llm_processing.get("skip_reason"))
+    if not skip_reason:
+        return ""
+    return f": {skip_reason}"
 
 
 def _extract_preview_paragraphs(text: str) -> list[str]:

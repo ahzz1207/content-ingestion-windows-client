@@ -174,12 +174,22 @@ class _FakeService:
 class _FakeSettings:
     def __init__(self, shared_root: Path) -> None:
         self.effective_shared_inbox_root = shared_root
+        self.llm_credentials_available = True
+        self.whisper_model_override = None
 
 
 class _Entry:
-    def __init__(self, *, job_id: str, state: str, summary: str = "Structured summary from WSL.") -> None:
+    def __init__(
+        self,
+        *,
+        job_id: str,
+        state: str,
+        analysis_state: str | None = None,
+        summary: str = "Structured summary from WSL.",
+    ) -> None:
         self.job_id = job_id
         self.state = state
+        self.analysis_state = analysis_state
         self.summary = summary
         self.job_dir = Path(".")
         self.source_url = None
@@ -190,6 +200,7 @@ class _Entry:
         self.canonical_url = None
         self.preview_text = None
         self.metadata_path = None
+        self.analysis_json_path = None
         self.normalized_json_path = None
         self.normalized_md_path = None
         self.status_path = None
@@ -198,7 +209,7 @@ class _Entry:
 
 
 def _processed_entry(job_id: str) -> _Entry:
-    return _Entry(job_id=job_id, state="processed")
+    return _Entry(job_id=job_id, state="processed", analysis_state="ready")
 
 
 if __name__ == "__main__":

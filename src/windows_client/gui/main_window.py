@@ -119,6 +119,34 @@ def _apply_result_state_pill(label: QLabel, state: str) -> None:
     label.setText(state.capitalize())
 
 
+def _apply_analysis_state_pill(label: QLabel, analysis_state: str | None) -> None:
+    styles = {
+        "ready": ("#15803d", "rgba(22, 163, 74, 0.14)", "Analysis Ready"),
+        "normalized_only": ("#475569", "rgba(148, 163, 184, 0.16)", "Normalized Only"),
+        "skipped": ("#9a3412", "rgba(249, 115, 22, 0.14)", "Analysis Skipped"),
+        "failed": ("#b91c1c", "rgba(239, 68, 68, 0.14)", "Analysis Failed"),
+        "processing": ("#1d4ed8", "rgba(37, 99, 235, 0.14)", "Analysis Pending"),
+        "pending": ("#9a3412", "rgba(249, 115, 22, 0.14)", "Analysis Pending"),
+    }
+    foreground, background, text = styles.get(
+        analysis_state or "",
+        ("#475569", "rgba(148, 163, 184, 0.16)", "Analysis Unknown"),
+    )
+    label.setStyleSheet(
+        f"""
+        QLabel {{
+            background: {background};
+            color: {foreground};
+            border-radius: 14px;
+            padding: 6px 12px;
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        """
+    )
+    label.setText(text)
+
+
 def _format_result_origin(entry: ResultWorkspaceEntry) -> str:
     if entry.canonical_url:
         return entry.canonical_url
@@ -158,16 +186,42 @@ def _structured_result_payload(entry: ResultWorkspaceEntry) -> dict[str, object]
 
 
 def _llm_processing_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
+    details_payload = entry.details.get("llm_processing")
+    if isinstance(details_payload, dict):
+        return details_payload
     normalized = entry.details.get("normalized")
     if not isinstance(normalized, dict):
         return None
-    metadata = normalized.get("metadata")
+    asset = normalized.get("asset")
+    if not isinstance(asset, dict):
+        return None
+    metadata = asset.get("metadata")
     if not isinstance(metadata, dict):
         return None
     llm_processing = metadata.get("llm_processing")
     if not isinstance(llm_processing, dict):
         return None
     return llm_processing
+
+
+def _analysis_skip_reason(entry: ResultWorkspaceEntry) -> str | None:
+    llm_processing = _llm_processing_payload(entry)
+    if llm_processing is None:
+        return None
+    reason = str(llm_processing.get("skip_reason") or "").strip()
+    return reason or None
+
+
+def _primary_result_button_text(entry: ResultWorkspaceEntry) -> str:
+    if entry.analysis_json_path is not None:
+        return "Open Final Result"
+    if entry.normalized_json_path is not None:
+        return "Open Processed Output"
+    if entry.error_path is not None:
+        return "Open Failure Details"
+    if entry.metadata_path is not None:
+        return "Open Handoff Metadata"
+    return "Open Result"
 
 
 def _resolved_evidence_html(item: dict[str, object]) -> str:
@@ -571,6 +625,8 @@ class ResultWorkspaceDialog(QDialog):
 
         self.status_pill = QLabel("")
         self.status_pill.setObjectName("PlatformPill")
+        self.analysis_pill = QLabel("")
+        self.analysis_pill.setObjectName("PlatformPill")
         self.empty_label = QLabel("Select a result to inspect its current state.")
         self.empty_label.setObjectName("SecondaryText")
         self.title_label = QLabel("")
@@ -703,10 +759,10 @@ class ResultWorkspaceDialog(QDialog):
         self.open_folder_button = QPushButton("Open Folder")
         self.open_folder_button.setObjectName("GhostButton")
         self.open_folder_button.clicked.connect(self._open_folder)
-        self.open_json_button = QPushButton("Open JSON")
+        self.open_json_button = QPushButton("Open Final Result")
         self.open_json_button.setObjectName("GhostButton")
         self.open_json_button.clicked.connect(self._open_json)
-        self.open_markdown_button = QPushButton("Open Markdown")
+        self.open_markdown_button = QPushButton("Open Technical Markdown")
         self.open_markdown_button.setObjectName("GhostButton")
         self.open_markdown_button.clicked.connect(self._open_markdown)
         close_button = QPushButton("Close")
@@ -718,8 +774,15 @@ class ResultWorkspaceDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(close_button)
 
+        pill_row = QHBoxLayout()
+        pill_row.setContentsMargins(0, 0, 0, 0)
+        pill_row.setSpacing(10)
+        pill_row.addWidget(self.status_pill, 0, Qt.AlignLeft)
+        pill_row.addWidget(self.analysis_pill, 0, Qt.AlignLeft)
+        pill_row.addStretch(1)
+
         detail_layout.addWidget(self.workspace_label)
-        detail_layout.addWidget(self.status_pill, 0, Qt.AlignLeft)
+        detail_layout.addLayout(pill_row)
         detail_layout.addWidget(self.empty_label)
         detail_layout.addWidget(self.title_label)
         detail_layout.addWidget(self.source_label)
@@ -737,6 +800,18 @@ class ResultWorkspaceDialog(QDialog):
 
         self._set_empty_state()
         self._reload_entries()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        parent_geometry = parent.frameGeometry()
+        if not parent_geometry.isValid():
+            return
+        geometry = self.frameGeometry()
+        geometry.moveCenter(parent_geometry.center())
+        self.move(geometry.topLeft())
 
     def _entry_list_label(self, entry: ResultWorkspaceEntry) -> str:
         title = entry.title or entry.job_id
@@ -799,6 +874,7 @@ class ResultWorkspaceDialog(QDialog):
 
     def _set_empty_state(self, message: str = "Select a result to inspect its current state.") -> None:
         self.status_pill.hide()
+        self.analysis_pill.hide()
         self.empty_label.setText(message)
         self.empty_label.show()
         self.title_label.clear()
@@ -814,7 +890,10 @@ class ResultWorkspaceDialog(QDialog):
             label.clear()
         self.open_folder_button.setEnabled(False)
         self.open_json_button.setEnabled(False)
+        self.open_json_button.setText("Open Final Result")
+        self.open_markdown_button.hide()
         self.open_markdown_button.setEnabled(False)
+        self.open_markdown_button.setText("Open Technical Markdown")
 
     def _selected_entry(self) -> ResultWorkspaceEntry | None:
         row = self.results_list.currentRow()
@@ -834,8 +913,14 @@ class ResultWorkspaceDialog(QDialog):
         if entry.state == "processed":
             if _structured_result_payload(entry) is not None:
                 return "Structured summary, analysis, and evidence from the latest WSL output."
-            llm_processing = _llm_processing_payload(entry)
-            if llm_processing is not None and str(llm_processing.get("status") or "") not in {"", "pass", "success"}:
+            if entry.analysis_state == "skipped":
+                skip_reason = _analysis_skip_reason(entry)
+                if skip_reason:
+                    return f"WSL normalized this job, but analysis was skipped: {skip_reason}."
+                return "WSL normalized this job, but analysis was skipped before a structured result was written."
+            if entry.analysis_state == "failed":
+                return "WSL normalized this job, but analysis failed before a structured result was written."
+            if entry.analysis_state == "normalized_only":
                 return "WSL normalized this job, but the LLM stage did not attach a structured result."
             return "Reading extract from the normalized WSL output."
         if entry.state == "failed":
@@ -853,8 +938,10 @@ class ResultWorkspaceDialog(QDialog):
         self._sync_item_widget_selection(row)
         self._selected_job_id = entry.job_id
         self.status_pill.show()
+        self.analysis_pill.show()
         self.empty_label.hide()
         _apply_result_state_pill(self.status_pill, entry.state)
+        _apply_analysis_state_pill(self.analysis_pill, entry.analysis_state)
         self.title_label.setText(entry.title or entry.job_id)
         self.source_label.setText(_format_result_origin(entry))
         self.byline_label.setText(_format_result_byline(entry))
@@ -876,9 +963,15 @@ class ResultWorkspaceDialog(QDialog):
         self.preview.setHtml(_preview_html(entry))
         self.open_folder_button.setEnabled(entry.job_dir is not None)
         self.open_json_button.setEnabled(
-            entry.normalized_json_path is not None or entry.error_path is not None or entry.metadata_path is not None
+            entry.analysis_json_path is not None
+            or entry.normalized_json_path is not None
+            or entry.error_path is not None
+            or entry.metadata_path is not None
         )
-        self.open_markdown_button.setEnabled(entry.normalized_md_path is not None)
+        self.open_json_button.setText(_primary_result_button_text(entry))
+        self.open_markdown_button.setVisible(False)
+        self.open_markdown_button.setEnabled(False)
+        self.open_markdown_button.setText("Open Technical Markdown")
 
     def _open_folder(self) -> None:
         entry = self._selected_entry()
@@ -893,7 +986,7 @@ class ResultWorkspaceDialog(QDialog):
         entry = self._selected_entry()
         if entry is None:
             return
-        path = entry.normalized_json_path or entry.error_path or entry.metadata_path
+        path = entry.analysis_json_path or entry.normalized_json_path or entry.error_path or entry.metadata_path
         if path is None:
             return
         if os.name == "nt":
@@ -1368,6 +1461,16 @@ class MainWindow(QMainWindow):
              values.get("browser_collector_available") == "True"),
             ("Inbox ready" if values.get("shared_inbox_exists") == "True" else "Inbox will be created",
              True),
+            (
+                "LLM ready" if values.get("wsl_llm_credentials_available") == "True" else "LLM missing",
+                values.get("wsl_llm_credentials_available") == "True",
+            ),
+            (
+                f"Whisper {values.get('wsl_whisper_model_override')}"
+                if values.get("wsl_whisper_model_override") not in {None, "", "default"}
+                else "Whisper default",
+                values.get("wsl_whisper_model_override") not in {None, "", "default"},
+            ),
         ]
         try:
             watcher_status = self.wsl_bridge.watch_status()
@@ -1523,7 +1626,18 @@ class MainWindow(QMainWindow):
     def _render_success(self, state: OperationViewState) -> None:
         assert state.job is not None
         metadata = _load_export_metadata(state.job.metadata_path)
-        self.result_summary.setText("The Windows job was written to the shared inbox. WSL results appear here once processed.")
+        summary = "The Windows job was written to the shared inbox. WSL results appear here once processed."
+        if not self.workflow.service.settings.llm_credentials_available:
+            summary = (
+                "The Windows job was written to the shared inbox. "
+                "WSL analysis is not configured and will be skipped until OPENAI_API_KEY or ZENMUX_API_KEY is set."
+            )
+        elif self._current_route is not None and self._current_route.is_video and not self.workflow.service.settings.whisper_model_override:
+            summary = (
+                "The Windows job was written to the shared inbox. "
+                "WSL transcription is using its default Whisper model because CONTENT_INGESTION_WHISPER_MODEL is not set."
+            )
+        self.result_summary.setText(summary)
         self.result_summary.show()
         details_text = json.dumps(metadata, ensure_ascii=False, indent=2) if metadata else "No technical details are available."
         self.details_text.setPlainText(details_text)
@@ -1589,7 +1703,7 @@ class MainWindow(QMainWindow):
         if not entries:
             QMessageBox.information(self, "No results yet", "No WSL results are available yet.")
             return
-        ResultWorkspaceDialog(parent=self, shared_root=shared_root).exec()
+        self._show_result_workspace(shared_root=shared_root, selected_job_id=None)
 
     def _start_result_polling(self) -> None:
         self._result_poll_attempts = 0
@@ -1658,10 +1772,21 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Result unavailable", "No WSL result is available for this job yet.")
             return
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
-        ResultWorkspaceDialog(parent=self, shared_root=shared_root, selected_job_id=result_entry.job_id).exec()
+        self._show_result_workspace(shared_root=shared_root, selected_job_id=result_entry.job_id)
         refreshed_state = self._refresh_current_job_result()
         if refreshed_state not in {"processed", "failed", "unavailable"}:
             self._start_result_polling()
+
+    def _show_result_workspace(self, *, shared_root: Path, selected_job_id: str | None) -> None:
+        try:
+            dialog = ResultWorkspaceDialog(parent=self, shared_root=shared_root, selected_job_id=selected_job_id)
+            dialog.setWindowModality(Qt.ApplicationModal)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            dialog.exec()
+        except Exception as exc:  # pragma: no cover - GUI boundary
+            QMessageBox.critical(self, "Result workspace failed", str(exc) or type(exc).__name__)
 
     def _set_meta_grid_visible(self, visible: bool) -> None:
         for index in range(self.meta_grid.count()):

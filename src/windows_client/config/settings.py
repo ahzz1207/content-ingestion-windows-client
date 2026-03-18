@@ -3,8 +3,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _read_path_env(name: str) -> Path | None:
+def _read_env(name: str) -> str | None:
     value = os.getenv(name)
+    if not value:
+        return None
+    return value
+
+
+def _read_path_env(name: str) -> Path | None:
+    value = _read_env(name)
     if not value:
         return None
     return Path(value)
@@ -20,6 +27,13 @@ class Settings:
     wsl_python_executable: str = field(default_factory=lambda: os.getenv("CONTENT_INGESTION_WSL_PYTHON", "python3"))
     yt_dlp_command: str | None = field(default_factory=lambda: os.getenv("CONTENT_INGESTION_YT_DLP_COMMAND"))
     ffmpeg_command: str | None = field(default_factory=lambda: os.getenv("CONTENT_INGESTION_FFMPEG_COMMAND"))
+    openai_api_key: str | None = field(default_factory=lambda: _read_env("OPENAI_API_KEY"))
+    openai_base_url: str | None = field(default_factory=lambda: _read_env("OPENAI_BASE_URL"))
+    zenmux_api_key: str | None = field(default_factory=lambda: _read_env("ZENMUX_API_KEY"))
+    zenmux_base_url: str | None = field(default_factory=lambda: _read_env("ZENMUX_BASE_URL"))
+    analysis_model_override: str | None = field(default_factory=lambda: _read_env("CONTENT_INGESTION_ANALYSIS_MODEL"))
+    multimodal_model_override: str | None = field(default_factory=lambda: _read_env("CONTENT_INGESTION_MULTIMODAL_MODEL"))
+    whisper_model_override: str | None = field(default_factory=lambda: _read_env("CONTENT_INGESTION_WHISPER_MODEL"))
     default_content_type: str = "html"
     default_platform: str = "generic"
     browser_headless: bool = True
@@ -48,3 +62,15 @@ class Settings:
     @property
     def wsl_watch_log_path(self) -> Path:
         return self.data_dir / "wsl-watch.log"
+
+    @property
+    def llm_credentials_available(self) -> bool:
+        return bool(self.openai_api_key or self.zenmux_api_key)
+
+    @property
+    def llm_provider_hint(self) -> str:
+        if self.openai_api_key:
+            return "openai"
+        if self.zenmux_api_key:
+            return "zenmux"
+        return "missing"

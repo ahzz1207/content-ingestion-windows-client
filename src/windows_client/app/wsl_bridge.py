@@ -26,6 +26,7 @@ class WslBridge:
         "ZENMUX_BASE_URL",
         "CONTENT_INGESTION_ANALYSIS_MODEL",
         "CONTENT_INGESTION_MULTIMODAL_MODEL",
+        "CONTENT_INGESTION_WHISPER_MODEL",
     )
 
     def __init__(self, settings: Settings) -> None:
