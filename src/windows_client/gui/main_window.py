@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import os
 import threading
@@ -23,11 +22,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QListWidget,
-    QListWidgetItem,
     QSizePolicy,
     QStackedWidget,
-    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -37,8 +33,14 @@ from windows_client.app.result_workspace import ResultWorkspaceEntry, list_recen
 from windows_client.app.view_models import OperationViewState
 from windows_client.app.workflow import WindowsClientWorkflow
 from windows_client.app.wsl_bridge import WslBridge
+from windows_client.gui.inline_result_view import InlineResultView
 from windows_client.gui.platform_router import PlatformRoute, resolve_platform_route
 from windows_client.gui.refresh_policy import RefreshGate
+from windows_client.gui.result_renderer import (  # re-exported for test compatibility
+    _preview_html,
+    _structured_result_payload,
+)
+from windows_client.gui.result_workspace_panel import ResultListItemWidget, ResultWorkspaceDialog
 from windows_client.gui.workers import WorkflowTaskThread
 
 
@@ -94,364 +96,6 @@ def _start_button_cooldown(button: QPushButton, *, seconds: float, label: str) -
         button.setText(label)
 
     QTimer.singleShot(int(seconds * 1000), _restore)
-
-
-def _apply_result_state_pill(label: QLabel, state: str) -> None:
-    styles = {
-        "pending": ("#9a3412", "rgba(249, 115, 22, 0.14)"),
-        "processing": ("#1d4ed8", "rgba(37, 99, 235, 0.14)"),
-        "processed": ("#15803d", "rgba(22, 163, 74, 0.14)"),
-        "failed": ("#b91c1c", "rgba(239, 68, 68, 0.14)"),
-    }
-    foreground, background = styles.get(state, ("#475569", "rgba(148, 163, 184, 0.16)"))
-    label.setStyleSheet(
-        f"""
-        QLabel {{
-            background: {background};
-            color: {foreground};
-            border-radius: 14px;
-            padding: 6px 12px;
-            font-size: 13px;
-            font-weight: 600;
-        }}
-        """
-    )
-    label.setText(state.capitalize())
-
-
-def _apply_analysis_state_pill(label: QLabel, analysis_state: str | None) -> None:
-    styles = {
-        "ready": ("#15803d", "rgba(22, 163, 74, 0.14)", "Analysis Ready"),
-        "normalized_only": ("#475569", "rgba(148, 163, 184, 0.16)", "Normalized Only"),
-        "skipped": ("#9a3412", "rgba(249, 115, 22, 0.14)", "Analysis Skipped"),
-        "failed": ("#b91c1c", "rgba(239, 68, 68, 0.14)", "Analysis Failed"),
-        "processing": ("#1d4ed8", "rgba(37, 99, 235, 0.14)", "Analysis Pending"),
-        "pending": ("#9a3412", "rgba(249, 115, 22, 0.14)", "Analysis Pending"),
-    }
-    foreground, background, text = styles.get(
-        analysis_state or "",
-        ("#475569", "rgba(148, 163, 184, 0.16)", "Analysis Unknown"),
-    )
-    label.setStyleSheet(
-        f"""
-        QLabel {{
-            background: {background};
-            color: {foreground};
-            border-radius: 14px;
-            padding: 6px 12px;
-            font-size: 13px;
-            font-weight: 600;
-        }}
-        """
-    )
-    label.setText(text)
-
-
-def _format_result_origin(entry: ResultWorkspaceEntry) -> str:
-    if entry.canonical_url:
-        return entry.canonical_url
-    if entry.source_url:
-        return entry.source_url
-    return "Source unavailable"
-
-
-def _format_result_byline(entry: ResultWorkspaceEntry) -> str:
-    parts = [value for value in (entry.author, entry.published_at) if value]
-    if not parts:
-        return "Author and publication time are not available yet."
-    return "  |  ".join(parts)
-
-
-def _preview_body(entry: ResultWorkspaceEntry) -> str:
-    if entry.preview_text:
-        return entry.preview_text
-    if entry.state == "processed":
-        return "No readable markdown preview is available for this processed result yet."
-    return json.dumps(entry.details, ensure_ascii=False, indent=2)
-
-
-def _structured_result_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
-    normalized = entry.details.get("normalized")
-    if not isinstance(normalized, dict):
-        return None
-    asset = normalized.get("asset")
-    if not isinstance(asset, dict):
-        return None
-    result = asset.get("result")
-    if not isinstance(result, dict):
-        return None
-    if not any(result.get(key) for key in ("summary", "key_points", "analysis_items", "verification_items", "synthesis")):
-        return None
-    return result
-
-
-def _llm_processing_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
-    details_payload = entry.details.get("llm_processing")
-    if isinstance(details_payload, dict):
-        return details_payload
-    normalized = entry.details.get("normalized")
-    if not isinstance(normalized, dict):
-        return None
-    asset = normalized.get("asset")
-    if not isinstance(asset, dict):
-        return None
-    metadata = asset.get("metadata")
-    if not isinstance(metadata, dict):
-        return None
-    llm_processing = metadata.get("llm_processing")
-    if not isinstance(llm_processing, dict):
-        return None
-    return llm_processing
-
-
-def _analysis_skip_reason(entry: ResultWorkspaceEntry) -> str | None:
-    llm_processing = _llm_processing_payload(entry)
-    if llm_processing is None:
-        return None
-    reason = str(llm_processing.get("skip_reason") or "").strip()
-    return reason or None
-
-
-def _primary_result_button_text(entry: ResultWorkspaceEntry) -> str:
-    if entry.analysis_json_path is not None:
-        return "Open Final Result"
-    if entry.normalized_json_path is not None:
-        return "Open Processed Output"
-    if entry.error_path is not None:
-        return "Open Failure Details"
-    if entry.metadata_path is not None:
-        return "Open Handoff Metadata"
-    return "Open Result"
-
-
-def _resolved_evidence_html(item: dict[str, object]) -> str:
-    evidence_refs = item.get("resolved_evidence")
-    if not isinstance(evidence_refs, list):
-        return ""
-    rendered: list[str] = []
-    for evidence in evidence_refs[:2]:
-        if not isinstance(evidence, dict):
-            continue
-        preview_text = str(evidence.get("preview_text") or "").strip()
-        if not preview_text:
-            continue
-        rendered.append(f"<li>{html.escape(preview_text)}</li>")
-    if not rendered:
-        return ""
-    return f"<ul class='evidence-list'>{''.join(rendered)}</ul>"
-
-
-def _structured_preview_html(entry: ResultWorkspaceEntry) -> str | None:
-    result = _structured_result_payload(entry)
-    if result is None:
-        return None
-
-    sections: list[str] = []
-    summary = result.get("summary")
-    if isinstance(summary, dict):
-        headline = str(summary.get("headline") or "").strip()
-        short_text = str(summary.get("short_text") or "").strip()
-        if headline or short_text:
-            sections.append(
-                "<section class='result-section result-hero'>"
-                f"<h2>{html.escape(headline or 'Summary')}</h2>"
-                f"<p>{html.escape(short_text or headline)}</p>"
-                "</section>"
-            )
-
-    def _render_cards(items: object, *, title: str, title_key: str, body_key: str) -> None:
-        if not isinstance(items, list) or not items:
-            return
-        cards: list[str] = []
-        for item in items[:3]:
-            if not isinstance(item, dict):
-                continue
-            card_title = str(item.get(title_key) or "").strip()
-            card_body = str(item.get(body_key) or "").strip()
-            if not card_title and not card_body:
-                continue
-            evidence_html = _resolved_evidence_html(item)
-            cards.append(
-                "<article class='result-card'>"
-                f"<h3>{html.escape(card_title or title)}</h3>"
-                f"<p>{html.escape(card_body or card_title)}</p>"
-                f"{evidence_html}"
-                "</article>"
-            )
-        if cards:
-            sections.append(
-                "<section class='result-section'>"
-                f"<h2>{html.escape(title)}</h2>"
-                f"<div class='result-grid'>{''.join(cards)}</div>"
-                "</section>"
-            )
-
-    _render_cards(result.get("key_points"), title="Key Points", title_key="title", body_key="details")
-    _render_cards(result.get("analysis_items"), title="Analysis", title_key="kind", body_key="statement")
-
-    verification_items = result.get("verification_items")
-    if isinstance(verification_items, list) and verification_items:
-        cards: list[str] = []
-        for item in verification_items[:3]:
-            if not isinstance(item, dict):
-                continue
-            claim = str(item.get("claim") or "").strip()
-            status = str(item.get("status") or "").strip() or "unclear"
-            rationale = str(item.get("rationale") or "").strip()
-            if not claim:
-                continue
-            cards.append(
-                "<article class='result-card verification-card'>"
-                f"<div class='status-chip status-{html.escape(status.lower())}'>{html.escape(status.title())}</div>"
-                f"<h3>{html.escape(claim)}</h3>"
-                f"<p>{html.escape(rationale or 'No rationale provided.')}</p>"
-                f"{_resolved_evidence_html(item)}"
-                "</article>"
-            )
-        if cards:
-            sections.append(
-                "<section class='result-section'>"
-                "<h2>Verification</h2>"
-                f"<div class='result-grid'>{''.join(cards)}</div>"
-                "</section>"
-            )
-
-    synthesis = result.get("synthesis")
-    if isinstance(synthesis, dict):
-        final_answer = str(synthesis.get("final_answer") or "").strip()
-        next_steps = synthesis.get("next_steps")
-        open_questions = synthesis.get("open_questions")
-        extras: list[str] = []
-        if isinstance(next_steps, list) and next_steps:
-            extras.append(
-                "<div><h3>Next Steps</h3><ul>"
-                + "".join(f"<li>{html.escape(str(step))}</li>" for step in next_steps[:3])
-                + "</ul></div>"
-            )
-        if isinstance(open_questions, list) and open_questions:
-            extras.append(
-                "<div><h3>Open Questions</h3><ul>"
-                + "".join(f"<li>{html.escape(str(question))}</li>" for question in open_questions[:3])
-                + "</ul></div>"
-            )
-        if final_answer or extras:
-            sections.append(
-                "<section class='result-section result-takeaway'>"
-                "<h2>Takeaway</h2>"
-                f"<p>{html.escape(final_answer)}</p>"
-                f"{''.join(extras)}"
-                "</section>"
-            )
-
-    warnings = result.get("warnings")
-    if isinstance(warnings, list) and warnings:
-        warning_items: list[str] = []
-        for item in warnings[:3]:
-            if not isinstance(item, dict):
-                continue
-            message = str(item.get("message") or "").strip()
-            severity = str(item.get("severity") or "").strip()
-            if not message:
-                continue
-            prefix = f"{severity.upper()}: " if severity else ""
-            warning_items.append(f"<li>{html.escape(prefix + message)}</li>")
-        if warning_items:
-            sections.append(
-                "<section class='result-section result-warnings'>"
-                "<h2>Warnings</h2>"
-                f"<ul>{''.join(warning_items)}</ul>"
-                "</section>"
-            )
-
-    if not sections:
-        return None
-    return f"<div class='preview-reading structured-result'>{''.join(sections)}</div>"
-
-
-def _preview_html(entry: ResultWorkspaceEntry) -> str:
-    if entry.state == "processed":
-        structured_html = _structured_preview_html(entry)
-        if structured_html is not None:
-            return structured_html
-        preview_text = _preview_body(entry)
-        paragraphs = [part.strip() for part in preview_text.split("\n\n") if part.strip()]
-        rendered = "".join(f"<p>{html.escape(part)}</p>" for part in paragraphs)
-        return f"<div class='preview-reading'>{rendered}</div>"
-    return f"<pre>{html.escape(_preview_body(entry))}</pre>"
-
-
-def _truncate_title(text: str, *, max_length: int = 64) -> str:
-    stripped = text.strip()
-    if len(stripped) <= max_length:
-        return stripped
-    return f"{stripped[: max_length - 1].rstrip()}..."
-
-
-class ResultListItemWidget(QFrame):
-    def __init__(self, entry: ResultWorkspaceEntry) -> None:
-        super().__init__()
-        self.entry = entry
-        self.setObjectName("ResultListItem")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(6)
-
-        self.title_label = QLabel(_truncate_title(entry.title or entry.job_id))
-        self.title_label.setObjectName("ResultListTitle")
-        self.title_label.setWordWrap(True)
-
-        self.meta_label = QLabel(
-            f"{(entry.platform or 'Unknown').title()} | {entry.state.capitalize()} | {_format_updated_at(entry.updated_at)}"
-        )
-        self.meta_label.setObjectName("ResultListMeta")
-        self.meta_label.setWordWrap(True)
-
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.meta_label)
-        self.set_selected(False)
-
-    def set_selected(self, selected: bool) -> None:
-        if selected:
-            self.setStyleSheet(
-                """
-                QFrame#ResultListItem {
-                    background: rgba(163, 75, 45, 0.10);
-                    border: 1px solid rgba(163, 75, 45, 0.18);
-                    border-radius: 16px;
-                }
-                QLabel#ResultListTitle {
-                    color: #0f172a;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-                QLabel#ResultListMeta {
-                    color: #8f3f25;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                """
-            )
-            return
-        self.setStyleSheet(
-            """
-            QFrame#ResultListItem {
-                background: rgba(248, 250, 252, 0.82);
-                border: 1px solid rgba(148, 163, 184, 0.12);
-                border-radius: 16px;
-            }
-            QLabel#ResultListTitle {
-                color: #18222f;
-                font-size: 14px;
-                font-weight: 600;
-            }
-            QLabel#ResultListMeta {
-                color: #64748b;
-                font-size: 12px;
-                font-weight: 500;
-            }
-            """
-        )
 
 
 class LoginPromptDialog(QDialog):
@@ -570,438 +214,6 @@ class LoginPromptDialog(QDialog):
         self._worker = None
 
 
-class ResultWorkspaceDialog(QDialog):
-    def __init__(
-        self,
-        *,
-        parent: QWidget | None,
-        shared_root: Path,
-        selected_job_id: str | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.shared_root = shared_root
-        self.entries: list[ResultWorkspaceEntry] = []
-        self._item_widgets: list[ResultListItemWidget] = []
-        self._selected_job_id = selected_job_id
-        self._refresh_gate = RefreshGate(min_interval_seconds=RESULT_REFRESH_INTERVAL_SECONDS)
-
-        self.setWindowTitle("Result Workspace")
-        self.resize(1080, 720)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(18)
-
-        sidebar = QFrame()
-        sidebar.setObjectName("SidebarCard")
-        sidebar.setFixedWidth(312)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(18, 18, 18, 18)
-        sidebar_layout.setSpacing(10)
-        sidebar_header = QHBoxLayout()
-        sidebar_title = QLabel("Recent Results")
-        sidebar_title.setObjectName("SectionLabel")
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.setObjectName("GhostButton")
-        self.refresh_button.setToolTip("Refresh is limited to once every 2 seconds.")
-        self.refresh_button.clicked.connect(self._request_reload_entries)
-        self.results_list = QListWidget()
-        self.results_list.setObjectName("ResultList")
-        self.results_list.setSpacing(8)
-        self.results_list.currentRowChanged.connect(self._render_selected_entry)
-        sidebar_header.addWidget(sidebar_title)
-        sidebar_header.addStretch(1)
-        sidebar_header.addWidget(self.refresh_button)
-        sidebar_layout.addLayout(sidebar_header)
-        sidebar_layout.addWidget(self.results_list, 1)
-
-        detail_card = QFrame()
-        detail_card.setObjectName("DetailCard")
-        detail_layout = QVBoxLayout(detail_card)
-        detail_layout.setContentsMargins(26, 26, 26, 26)
-        detail_layout.setSpacing(12)
-        self.workspace_label = QLabel("Workspace")
-        self.workspace_label.setObjectName("EyebrowText")
-
-        self.status_pill = QLabel("")
-        self.status_pill.setObjectName("PlatformPill")
-        self.analysis_pill = QLabel("")
-        self.analysis_pill.setObjectName("PlatformPill")
-        self.empty_label = QLabel("Select a result to inspect its current state.")
-        self.empty_label.setObjectName("SecondaryText")
-        self.title_label = QLabel("")
-        self.title_label.setObjectName("ResultTitle")
-        self.source_label = QLabel("")
-        self.source_label.setObjectName("CaptionText")
-        self.source_label.setWordWrap(True)
-        self.byline_label = QLabel("")
-        self.byline_label.setObjectName("BylineText")
-        self.byline_label.setWordWrap(True)
-        self.summary_label = QLabel("")
-        self.summary_label.setObjectName("BodyText")
-        self.summary_label.setWordWrap(True)
-        self.meta_toggle = QToolButton()
-        self.meta_toggle.setText("Show metadata")
-        self.meta_toggle.setCheckable(True)
-        self.meta_toggle.toggled.connect(self._toggle_metadata)
-
-        self.meta_frame = QFrame()
-        self.meta_frame.setObjectName("PreviewCard")
-        self.meta_grid = QGridLayout(self.meta_frame)
-        self.meta_grid.setHorizontalSpacing(18)
-        self.meta_grid.setVerticalSpacing(8)
-        self.meta_value_labels: dict[str, QLabel] = {}
-        for row, label in enumerate(("Job ID", "Platform", "Source URL", "Canonical URL", "Author", "Published", "Location")):
-            label_widget = QLabel(f"{label}:")
-            label_widget.setObjectName("SecondaryText")
-            value_widget = QLabel("")
-            value_widget.setWordWrap(True)
-            self.meta_grid.addWidget(label_widget, row, 0)
-            self.meta_grid.addWidget(value_widget, row, 1)
-            self.meta_value_labels[label] = value_widget
-
-        preview_label = QLabel("Preview")
-        preview_label.setObjectName("SectionLabel")
-        self.preview_hint_label = QLabel("")
-        self.preview_hint_label.setObjectName("SecondaryText")
-        self.preview_hint_label.setWordWrap(True)
-        self.preview = QTextBrowser()
-        self.preview.setReadOnly(True)
-        self.preview.setOpenExternalLinks(True)
-        self.preview.document().setDocumentMargin(0)
-        self.preview.document().setDefaultStyleSheet(
-            """
-            .preview-reading p {
-                margin: 0 0 14px 0;
-                line-height: 1.7;
-            }
-            .structured-result {
-                display: block;
-            }
-            .result-section {
-                margin: 0 0 22px 0;
-                padding: 0 0 18px 0;
-                border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-            }
-            .result-section:last-child {
-                margin-bottom: 0;
-                padding-bottom: 0;
-                border-bottom: none;
-            }
-            .result-section h2 {
-                margin: 0 0 10px 0;
-                font-size: 14px;
-                text-transform: uppercase;
-                letter-spacing: 0.08em;
-                color: #8f3f25;
-            }
-            .result-section h3 {
-                margin: 0 0 8px 0;
-                font-size: 16px;
-                color: #16202b;
-            }
-            .result-card {
-                margin: 0 0 14px 0;
-                padding: 14px 16px;
-                background: rgba(255, 255, 255, 0.76);
-                border: 1px solid rgba(172, 139, 108, 0.12);
-                border-radius: 16px;
-            }
-            .result-hero {
-                padding: 18px 20px;
-                background: linear-gradient(135deg, rgba(163, 75, 45, 0.08), rgba(22, 32, 43, 0.04));
-                border: 1px solid rgba(163, 75, 45, 0.14);
-                border-radius: 20px;
-            }
-            .result-takeaway {
-                padding: 18px 20px;
-                background: rgba(22, 32, 43, 0.04);
-                border: 1px solid rgba(22, 32, 43, 0.08);
-                border-radius: 20px;
-            }
-            .status-chip {
-                display: inline-block;
-                margin: 0 0 10px 0;
-                padding: 5px 10px;
-                border-radius: 999px;
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 0.04em;
-            }
-            .status-supported {
-                background: rgba(22, 163, 74, 0.12);
-                color: #15803d;
-            }
-            .status-partial {
-                background: rgba(245, 158, 11, 0.14);
-                color: #b45309;
-            }
-            .status-unsupported, .status-unclear {
-                background: rgba(220, 38, 38, 0.10);
-                color: #b91c1c;
-            }
-            .evidence-list {
-                margin: 10px 0 0 0;
-                padding-left: 18px;
-                color: #475569;
-            }
-            pre {
-                white-space: pre-wrap;
-                font-family: Consolas, 'Courier New', monospace;
-                font-size: 12px;
-                line-height: 1.5;
-                color: #334155;
-            }
-            """
-        )
-
-        actions = QHBoxLayout()
-        self.open_folder_button = QPushButton("Open Folder")
-        self.open_folder_button.setObjectName("GhostButton")
-        self.open_folder_button.clicked.connect(self._open_folder)
-        self.open_json_button = QPushButton("Open Final Result")
-        self.open_json_button.setObjectName("GhostButton")
-        self.open_json_button.clicked.connect(self._open_json)
-        self.open_markdown_button = QPushButton("Open Technical Markdown")
-        self.open_markdown_button.setObjectName("GhostButton")
-        self.open_markdown_button.clicked.connect(self._open_markdown)
-        close_button = QPushButton("Close")
-        close_button.setObjectName("PrimaryButton")
-        close_button.clicked.connect(self.accept)
-        actions.addWidget(self.open_folder_button)
-        actions.addWidget(self.open_json_button)
-        actions.addWidget(self.open_markdown_button)
-        actions.addStretch(1)
-        actions.addWidget(close_button)
-
-        pill_row = QHBoxLayout()
-        pill_row.setContentsMargins(0, 0, 0, 0)
-        pill_row.setSpacing(10)
-        pill_row.addWidget(self.status_pill, 0, Qt.AlignLeft)
-        pill_row.addWidget(self.analysis_pill, 0, Qt.AlignLeft)
-        pill_row.addStretch(1)
-
-        detail_layout.addWidget(self.workspace_label)
-        detail_layout.addLayout(pill_row)
-        detail_layout.addWidget(self.empty_label)
-        detail_layout.addWidget(self.title_label)
-        detail_layout.addWidget(self.source_label)
-        detail_layout.addWidget(self.byline_label)
-        detail_layout.addWidget(self.summary_label)
-        detail_layout.addWidget(self.meta_toggle, 0, Qt.AlignLeft)
-        detail_layout.addWidget(self.meta_frame)
-        detail_layout.addWidget(preview_label)
-        detail_layout.addWidget(self.preview_hint_label)
-        detail_layout.addWidget(self.preview, 1)
-        detail_layout.addLayout(actions)
-
-        layout.addWidget(sidebar, 0)
-        layout.addWidget(detail_card, 1)
-
-        self._set_empty_state()
-        self._reload_entries()
-
-    def showEvent(self, event) -> None:  # type: ignore[override]
-        super().showEvent(event)
-        parent = self.parentWidget()
-        if parent is None:
-            return
-        parent_geometry = parent.frameGeometry()
-        if not parent_geometry.isValid():
-            return
-        geometry = self.frameGeometry()
-        geometry.moveCenter(parent_geometry.center())
-        self.move(geometry.topLeft())
-
-    def _entry_list_label(self, entry: ResultWorkspaceEntry) -> str:
-        title = entry.title or entry.job_id
-        platform = entry.platform or entry.state
-        return f"{title}\n{platform} · {entry.state}"
-
-    def _sidebar_entry_label(self, entry: ResultWorkspaceEntry) -> str:
-        title = entry.title or entry.job_id
-        platform = entry.platform or "Unknown"
-        return f"{title}\n{platform} · {entry.state} · {_format_updated_at(entry.updated_at)}"
-
-    def _request_reload_entries(self) -> None:
-        if not self._refresh_gate.allow_now():
-            return
-        self._refresh_gate.mark()
-        _start_button_cooldown(
-            self.refresh_button,
-            seconds=RESULT_REFRESH_INTERVAL_SECONDS,
-            label="Refresh",
-        )
-        self._reload_entries()
-
-    def _reload_entries(self) -> None:
-        current_entry = self._selected_entry()
-        selected_job_id = current_entry.job_id if current_entry is not None else self._selected_job_id
-        self.entries = list_recent_results(self.shared_root, limit=24)
-        self._item_widgets = []
-        self.results_list.clear()
-        for entry in self.entries:
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, entry.job_id)
-            widget = ResultListItemWidget(entry)
-            item.setSizeHint(widget.sizeHint())
-            self.results_list.addItem(item)
-            self.results_list.setItemWidget(item, widget)
-            self._item_widgets.append(widget)
-        if not self.entries:
-            self._selected_job_id = None
-            self._set_empty_state("No results are available yet in the shared inbox.")
-            return
-
-        selected_index = 0
-        if selected_job_id is not None:
-            for index, entry in enumerate(self.entries):
-                if entry.job_id == selected_job_id:
-                    selected_index = index
-                    break
-        self.results_list.setCurrentRow(selected_index)
-        self._selected_job_id = self.entries[selected_index].job_id
-
-    def _result_list_label(self, entry: ResultWorkspaceEntry) -> str:
-        title = entry.title or entry.job_id
-        platform = entry.platform or "Unknown"
-        return f"{title}\n{platform} · {entry.state} · {_format_updated_at(entry.updated_at)}"
-
-    def _result_list_label_ascii(self, entry: ResultWorkspaceEntry) -> str:
-        title = entry.title or entry.job_id
-        platform = entry.platform or "Unknown"
-        return f"{title}\n{platform} | {entry.state} | {_format_updated_at(entry.updated_at)}"
-
-    def _set_empty_state(self, message: str = "Select a result to inspect its current state.") -> None:
-        self.status_pill.hide()
-        self.analysis_pill.hide()
-        self.empty_label.setText(message)
-        self.empty_label.show()
-        self.title_label.clear()
-        self.source_label.clear()
-        self.byline_label.clear()
-        self.summary_label.clear()
-        self.preview_hint_label.clear()
-        self.preview.clear()
-        self.meta_toggle.setChecked(False)
-        self.meta_toggle.hide()
-        self.meta_frame.hide()
-        for label in self.meta_value_labels.values():
-            label.clear()
-        self.open_folder_button.setEnabled(False)
-        self.open_json_button.setEnabled(False)
-        self.open_json_button.setText("Open Final Result")
-        self.open_markdown_button.hide()
-        self.open_markdown_button.setEnabled(False)
-        self.open_markdown_button.setText("Open Technical Markdown")
-
-    def _selected_entry(self) -> ResultWorkspaceEntry | None:
-        row = self.results_list.currentRow()
-        if row < 0 or row >= len(self.entries):
-            return None
-        return self.entries[row]
-
-    def _sync_item_widget_selection(self, selected_row: int) -> None:
-        for index, widget in enumerate(self._item_widgets):
-            widget.set_selected(index == selected_row)
-
-    def _toggle_metadata(self, visible: bool) -> None:
-        self.meta_toggle.setText("Hide metadata" if visible else "Show metadata")
-        self.meta_frame.setVisible(visible)
-
-    def _preview_hint(self, entry: ResultWorkspaceEntry) -> str:
-        if entry.state == "processed":
-            if _structured_result_payload(entry) is not None:
-                return "Structured summary, analysis, and evidence from the latest WSL output."
-            if entry.analysis_state == "skipped":
-                skip_reason = _analysis_skip_reason(entry)
-                if skip_reason:
-                    return f"WSL normalized this job, but analysis was skipped: {skip_reason}."
-                return "WSL normalized this job, but analysis was skipped before a structured result was written."
-            if entry.analysis_state == "failed":
-                return "WSL normalized this job, but analysis failed before a structured result was written."
-            if entry.analysis_state == "normalized_only":
-                return "WSL normalized this job, but the LLM stage did not attach a structured result."
-            return "Reading extract from the normalized WSL output."
-        if entry.state == "failed":
-            return "Structured failure details from the WSL result directory."
-        if entry.state == "processing":
-            return "This job is still being processed. Metadata below reflects the latest handoff state."
-        return "This job is still waiting in the shared inbox. Details below come from the Windows handoff metadata."
-
-    def _render_selected_entry(self, row: int) -> None:
-        if row < 0 or row >= len(self.entries):
-            self._sync_item_widget_selection(-1)
-            self._set_empty_state()
-            return
-        entry = self.entries[row]
-        self._sync_item_widget_selection(row)
-        self._selected_job_id = entry.job_id
-        self.status_pill.show()
-        self.analysis_pill.show()
-        self.empty_label.hide()
-        _apply_result_state_pill(self.status_pill, entry.state)
-        _apply_analysis_state_pill(self.analysis_pill, entry.analysis_state)
-        self.title_label.setText(entry.title or entry.job_id)
-        self.source_label.setText(_format_result_origin(entry))
-        self.byline_label.setText(_format_result_byline(entry))
-        self.summary_label.setText(entry.summary)
-        values = {
-            "Job ID": entry.job_id,
-            "Platform": entry.platform or "Unknown",
-            "Source URL": entry.source_url or "Unknown",
-            "Canonical URL": entry.canonical_url or "Unknown",
-            "Author": entry.author or "Unknown",
-            "Published": entry.published_at or "Unknown",
-            "Location": str(entry.job_dir) if entry.job_dir is not None else "Unknown",
-        }
-        for label, value in values.items():
-            self.meta_value_labels[label].setText(value)
-        self.meta_toggle.show()
-        self.meta_toggle.setChecked(False)
-        self.preview_hint_label.setText(self._preview_hint(entry))
-        self.preview.setHtml(_preview_html(entry))
-        self.open_folder_button.setEnabled(entry.job_dir is not None)
-        self.open_json_button.setEnabled(
-            entry.analysis_json_path is not None
-            or entry.normalized_json_path is not None
-            or entry.error_path is not None
-            or entry.metadata_path is not None
-        )
-        self.open_json_button.setText(_primary_result_button_text(entry))
-        self.open_markdown_button.setVisible(False)
-        self.open_markdown_button.setEnabled(False)
-        self.open_markdown_button.setText("Open Technical Markdown")
-
-    def _open_folder(self) -> None:
-        entry = self._selected_entry()
-        if entry is None or entry.job_dir is None:
-            return
-        if os.name == "nt":
-            os.startfile(entry.job_dir)  # type: ignore[attr-defined]
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(entry.job_dir)))
-
-    def _open_json(self) -> None:
-        entry = self._selected_entry()
-        if entry is None:
-            return
-        path = entry.analysis_json_path or entry.normalized_json_path or entry.error_path or entry.metadata_path
-        if path is None:
-            return
-        if os.name == "nt":
-            os.startfile(path)  # type: ignore[attr-defined]
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-
-    def _open_markdown(self) -> None:
-        entry = self._selected_entry()
-        if entry is None or entry.normalized_md_path is None:
-            return
-        if os.name == "nt":
-            os.startfile(entry.normalized_md_path)  # type: ignore[attr-defined]
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(entry.normalized_md_path)))
 
 
 class MainWindow(QMainWindow):
@@ -1061,8 +273,11 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.ready_page = self._build_ready_page()
         self.task_page = self._build_task_page()
+        self.result_inline = InlineResultView(parent=self)
+        self.result_inline.back_button.clicked.connect(self._show_task_state)
         self.stack.addWidget(self.ready_page)
         self.stack.addWidget(self.task_page)
+        self.stack.addWidget(self.result_inline)
 
         self.footer_label = QLabel("Automatic platform detection and browser guidance are enabled.")
         self.footer_label.setObjectName("SecondaryText")
@@ -1089,7 +304,7 @@ class MainWindow(QMainWindow):
         card_layout.setContentsMargins(48, 52, 48, 52)
         card_layout.setSpacing(18)
 
-        eyebrow = QLabel("Windows  ->  WSL")
+        eyebrow = QLabel("Capture  →  Analyse  →  Read")
         eyebrow.setObjectName("EyebrowText")
 
         intro = QLabel("Paste a URL to get started.")
@@ -1477,11 +692,11 @@ class MainWindow(QMainWindow):
         except Exception:
             watcher_status = None
         if watcher_status is None:
-            pills.append(("WSL watcher not started", False))
+            pills.append(("Processor not started", False))
         else:
             pills.append(
                 (
-                    "WSL watcher running" if watcher_status.get("running") == "True" else "WSL watcher stopped",
+                    "Processor running" if watcher_status.get("running") == "True" else "Processor stopped",
                     watcher_status.get("running") == "True",
                 )
             )
@@ -1496,6 +711,10 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.ready_page)
         self._sync_video_download_controls(self.url_input.text())
         self.url_input.setFocus()
+
+    def _show_task_state(self) -> None:
+        """Return to the task page (used by the inline result view's back button)."""
+        self.stack.setCurrentWidget(self.task_page)
 
     def _reset_to_ready_state(self) -> None:
         self._stop_result_polling()
@@ -1626,16 +845,15 @@ class MainWindow(QMainWindow):
     def _render_success(self, state: OperationViewState) -> None:
         assert state.job is not None
         metadata = _load_export_metadata(state.job.metadata_path)
-        summary = "The Windows job was written to the shared inbox. WSL results appear here once processed."
+        summary = "Your content has been captured and sent for analysis. Results will appear here automatically."
         if not self.workflow.service.settings.llm_credentials_available:
             summary = (
-                "The Windows job was written to the shared inbox. "
-                "WSL analysis is not configured and will be skipped until OPENAI_API_KEY or ZENMUX_API_KEY is set."
+                "Analysis is not configured — set OPENAI_API_KEY or ZENMUX_API_KEY to enable it."
             )
         elif self._current_route is not None and self._current_route.is_video and not self.workflow.service.settings.whisper_model_override:
             summary = (
-                "The Windows job was written to the shared inbox. "
-                "WSL transcription is using its default Whisper model because CONTENT_INGESTION_WHISPER_MODEL is not set."
+                "Transcription will use the default Whisper model. "
+                "Set CONTENT_INGESTION_WHISPER_MODEL to override."
             )
         self.result_summary.setText(summary)
         self.result_summary.show()
@@ -1701,7 +919,7 @@ class MainWindow(QMainWindow):
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
         entries = list_recent_results(shared_root, limit=24)
         if not entries:
-            QMessageBox.information(self, "No results yet", "No WSL results are available yet.")
+            QMessageBox.information(self, "No results yet", "No results are available yet.")
             return
         self._show_result_workspace(shared_root=shared_root, selected_job_id=None)
 
@@ -1726,7 +944,7 @@ class MainWindow(QMainWindow):
             return
         if self._result_poll_attempts >= AUTO_RESULT_POLL_MAX_ATTEMPTS:
             self.result_summary.setText(
-                "The Windows job was written to the shared inbox. WSL has not finished yet; you can check again later."
+                "Analysis is still in progress. Check back later."
             )
             return
         self._schedule_result_poll()
@@ -1738,9 +956,9 @@ class MainWindow(QMainWindow):
         result_entry = load_job_result(shared_root, self._current_state.job.job_id)
         if result_entry is None:
             self.result_summary.setText(
-                "The Windows job was written to the shared inbox. WSL has not created a result yet."
+                "No analysis result yet."
                 if not from_auto_poll
-                else "The Windows job was written to the shared inbox. Waiting for WSL to pick it up..."
+                else "Waiting for the processor to pick this up..."
             )
             self._latest_result_entry = None
             self.open_result_button.hide()
@@ -1750,9 +968,14 @@ class MainWindow(QMainWindow):
             self.open_result_button.setText("Open Result")
             self.open_result_button.show()
             self._latest_result_entry = result_entry
+            # Navigate to inline result view if a brief is available
+            brief = result_entry.details.get("insight_brief")
+            if brief is not None:
+                self.result_inline.load_brief(brief, entry=result_entry)
+                self.stack.setCurrentWidget(self.result_inline)
             return "processed"
         if result_entry.state == "failed":
-            self.result_summary.setText("WSL failed to process this job. Open the result workspace for details.")
+            self.result_summary.setText("Processing failed. Open the result workspace for details.")
             self.open_result_button.setText("Open Failed Result")
             self.open_result_button.show()
             self._latest_result_entry = result_entry
@@ -1769,7 +992,7 @@ class MainWindow(QMainWindow):
             self._refresh_current_job_result()
             result_entry = getattr(self, "_latest_result_entry", None)
         if result_entry is None:
-            QMessageBox.information(self, "Result unavailable", "No WSL result is available for this job yet.")
+            QMessageBox.information(self, "Result unavailable", "No result is available for this job yet.")
             return
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
         self._show_result_workspace(shared_root=shared_root, selected_job_id=result_entry.job_id)

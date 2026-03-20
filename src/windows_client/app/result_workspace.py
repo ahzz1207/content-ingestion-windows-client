@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from windows_client.app.coverage_stats import CoverageStats, compute_coverage
+from windows_client.app.evidence_resolver import (
+    EvidenceSnippet,
+    load_evidence_index,
+    resolve_evidence_for_item,
+)
+from windows_client.app.insight_brief import InsightBriefV2, adapt_from_structured_result
+
 
 @dataclass(slots=True)
 class ResultWorkspaceEntry:
@@ -29,6 +37,7 @@ class ResultWorkspaceEntry:
     status_path: Path | None
     error_path: Path | None
     details: dict[str, Any]
+    coverage: CoverageStats | None = None
 
 
 def load_job_result(shared_root: Path, job_id: str) -> ResultWorkspaceEntry | None:
@@ -104,6 +113,27 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
         markdown_exists=normalized_md_path.exists(),
     )
 
+    # Evidence resolver: build id→snippet index from text_request.json
+    evidence_index = load_evidence_index(job_dir)
+    _inject_resolved_evidence(structured_result, evidence_index)
+
+    # Coverage stats: detect transcript truncation
+    coverage = compute_coverage(job_dir)
+
+    # InsightBriefV2: high-level brief for inline result view
+    brief = adapt_from_structured_result(structured_result, evidence_index, coverage)
+
+    details: dict[str, Any] = {
+        "normalized": normalized,
+        "status": status,
+        "metadata": _read_json_file(metadata_path) if metadata_path.exists() else {},
+        "llm_processing": llm_processing,
+        "structured_result": structured_result,
+        "insight_brief": brief,
+    }
+    if coverage is not None:
+        details["coverage"] = coverage
+
     return ResultWorkspaceEntry(
         job_id=str(normalized.get("job_id") or job_dir.name),
         state="processed",
@@ -124,13 +154,8 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
         normalized_md_path=normalized_md_path if normalized_md_path.exists() else None,
         status_path=status_path if status_path.exists() else None,
         error_path=None,
-        details={
-            "normalized": normalized,
-            "status": status,
-            "metadata": _read_json_file(metadata_path) if metadata_path.exists() else {},
-            "llm_processing": llm_processing,
-            "structured_result": structured_result,
-        },
+        details=details,
+        coverage=coverage,
     )
 
 
@@ -153,7 +178,7 @@ def _load_failed_result(job_dir: Path) -> ResultWorkspaceEntry:
         published_at=None,
         platform=_coerce_str(metadata.get("platform")),
         canonical_url=_coerce_str(metadata.get("final_url")),
-        summary=_coerce_str(error.get("error_message")) or "WSL failed to process this job.",
+        summary=_coerce_str(error.get("error_message")) or "Processing failed.",
         preview_text=None,
         metadata_path=metadata_path if metadata_path.exists() else None,
         analysis_json_path=None,
@@ -184,7 +209,7 @@ def _load_processing_result(job_dir: Path) -> ResultWorkspaceEntry:
         published_at=_coerce_str(metadata.get("published_at_hint")),
         platform=_coerce_str(metadata.get("platform")),
         canonical_url=_coerce_str(metadata.get("final_url")),
-        summary="WSL is still processing this job.",
+        summary="Being analysed.",
         preview_text=None,
         metadata_path=metadata_path if metadata_path.exists() else None,
         analysis_json_path=None,
@@ -211,7 +236,7 @@ def _load_pending_result(job_dir: Path) -> ResultWorkspaceEntry:
         published_at=_coerce_str(metadata.get("published_at_hint")),
         platform=_coerce_str(metadata.get("platform")),
         canonical_url=_coerce_str(metadata.get("final_url")),
-        summary="The job is waiting for the WSL watcher.",
+        summary="Queued for analysis.",
         preview_text=None,
         metadata_path=metadata_path if metadata_path.exists() else None,
         analysis_json_path=None,
@@ -237,6 +262,29 @@ def _read_text(path: Path, *, limit: int) -> str | None:
     if not path.exists():
         return None
     return path.read_text(encoding="utf-8")[:limit]
+
+
+def _inject_resolved_evidence(
+    structured_result: dict[str, Any],
+    evidence_index: dict[str, EvidenceSnippet],
+) -> None:
+    """Mutate structured_result items to add resolved_evidence lists."""
+    for section_key in ("key_points", "analysis_items", "verification_items"):
+        items = structured_result.get(section_key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            snippets = resolve_evidence_for_item(item, evidence_index)
+            item["resolved_evidence"] = [
+                {
+                    "preview_text": s.text[:200],
+                    "kind": s.kind,
+                    "start_ms": s.start_ms,
+                }
+                for s in snippets
+            ]
 
 
 def _build_processed_preview(path: Path) -> str | None:
@@ -274,15 +322,15 @@ def _build_processed_summary(
         return asset_summary
 
     if preview_text is None and markdown_exists:
-        return "WSL processed this job, but the normalized preview text looks unreadable."
+        return "Content was captured, but the preview text looks unreadable."
     if analysis_state == "skipped":
         skip_reason = _format_skip_reason(llm_processing)
-        return f"WSL normalized this job, but analysis was skipped{skip_reason}."
+        return f"Content was captured, but analysis was skipped{skip_reason}."
     if analysis_state == "failed":
-        return "WSL normalized this job, but analysis failed before a structured result was written."
+        return "Content was captured, but analysis failed before a structured result was written."
     if analysis_state == "normalized_only":
-        return "WSL normalized this job, but the LLM stage did not produce a structured result."
-    return "WSL processed this job successfully."
+        return "Content was captured, but the analysis stage did not produce a structured result."
+    return "Content processed successfully."
 
 
 def _resolve_processed_metadata(normalized: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:

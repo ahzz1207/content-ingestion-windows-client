@@ -102,13 +102,20 @@ class WslBridge:
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {state.pid}", "/FO", "CSV", "/NH"],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             check=False,
         )
-        stdout = result.stdout.strip()
-        if result.returncode != 0 or not stdout or "No tasks are running" in stdout:
+        # tasklist output may be GBK on Chinese Windows; decode with both
+        stdout_raw = result.stdout
+        stdout = stdout_raw.decode("gbk", errors="replace").strip()
+        if not stdout:
+            stdout = stdout_raw.decode("utf-8", errors="replace").strip()
+        # Process not found: returncode non-zero, empty output, or the CSV
+        # output does not quote the image name (meaning no matching row).
+        # We detect "process found" by checking whether the output contains
+        # a quoted CSV token — tasklist /FO CSV /NH emits lines like
+        # "wsl.exe","75920",... only when a match exists.
+        process_found = result.returncode == 0 and '"' in stdout
+        if not process_found:
             return {
                 "running": "False",
                 "pid": str(state.pid),

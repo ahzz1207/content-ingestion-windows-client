@@ -57,7 +57,7 @@ class MainWindowTests(unittest.TestCase):
             for _ in range(20):
                 self.window._poll_current_job_result()
 
-        self.assertIn("check again later", self.window.result_summary.text())
+        self.assertIn("Check back later", self.window.result_summary.text())
 
     def test_technical_details_area_has_visible_height(self) -> None:
         self.assertGreaterEqual(self.window.details_text.minimumHeight(), 180)
@@ -130,8 +130,29 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("Claim one", rendered)
         self.assertIn("Evidence excerpt", rendered)
 
+    def test_preview_html_renders_all_key_points_without_truncation(self) -> None:
+        """Phase 3: All 5 key points must appear (no [:3] cap)."""
+        entry = _processed_entry("job-no-cap")
+        entry.details = {
+            "normalized": {
+                "asset": {
+                    "result": {
+                        "summary": {"headline": "H", "short_text": "S"},
+                        "key_points": [
+                            {"id": f"kp-{i}", "title": f"KeyPoint{i}", "details": f"Detail {i}"}
+                            for i in range(5)
+                        ],
+                    }
+                },
+                "metadata": {"llm_processing": {"status": "pass"}},
+            }
+        }
+        rendered = _preview_html(entry)
+        for i in range(5):
+            self.assertIn(f"KeyPoint{i}", rendered)
+
     def test_open_current_job_result_refreshes_status_after_workspace_closes(self) -> None:
-        self.window._latest_result_entry = _Entry(job_id="job-123", state="processing", summary="WSL is still processing this job.")
+        self.window._latest_result_entry = _Entry(job_id="job-123", state="processing", summary="Being analysed.")
         with (
             patch("windows_client.gui.main_window.ResultWorkspaceDialog") as dialog_cls,
             patch(
@@ -144,6 +165,32 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window.result_summary.text(), "Structured summary from WSL.")
         self.assertEqual(self.window._latest_result_entry.state, "processed")
+
+    def test_completed_job_with_brief_navigates_to_result_page(self) -> None:
+        """Phase 7: when result has insight_brief, stack should show inline result view."""
+
+        class _FakeBrief:
+            class hero:
+                title = "Test Title"
+                one_sentence_take = "Short take."
+                content_kind = None
+                author_stance = None
+
+            quick_takeaways = ["Point A"]
+            viewpoints = []
+            coverage = None
+            gaps = []
+
+        entry = _processed_entry("job-brief")
+        entry.details["insight_brief"] = _FakeBrief()
+
+        with patch(
+            "windows_client.gui.main_window.load_job_result",
+            return_value=entry,
+        ):
+            self.window._refresh_current_job_result()
+
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
 
 
 class _FakeWorkflow:
