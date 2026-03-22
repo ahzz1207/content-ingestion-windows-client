@@ -37,7 +37,7 @@ class Settings:
     default_content_type: str = "html"
     default_platform: str = "generic"
     browser_headless: bool = True
-    browser_wait_until: str = "networkidle"
+    browser_wait_until: str = "domcontentloaded"
     browser_timeout_ms: int = 30000
     browser_settle_ms: int = 1000
 

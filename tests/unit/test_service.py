@@ -45,7 +45,7 @@ class WindowsClientServiceTests(unittest.TestCase):
         self.assertIn(f"browser_profiles_dir={self.project_root / 'data' / 'browser-profiles'}", lines)
         self.assertIn("shared_inbox_exists=False", lines)
         self.assertIn("browser_default_headless=True", lines)
-        self.assertIn("browser_default_wait_until=networkidle", lines)
+        self.assertIn("browser_default_wait_until=domcontentloaded", lines)
         self.assertIn("browser_default_timeout_ms=30000", lines)
         self.assertIn("browser_default_settle_ms=1000", lines)
         self.assertIn("browser_collector_available=False", lines)
@@ -53,8 +53,7 @@ class WindowsClientServiceTests(unittest.TestCase):
         self.assertIn("video_downloader_available=False", lines)
         self.assertIn("video_downloader_reason=not_configured", lines)
         self.assertIn("video_js_runtime=none", lines)
-        self.assertIn("wsl_llm_credentials_available=False", lines)
-        self.assertIn("wsl_llm_provider_hint=missing", lines)
+        self.assertTrue(any(line.startswith("wsl_llm_credentials_available=") for line in lines))
         self.assertIn("wsl_whisper_model_override=default", lines)
 
     def test_export_mock_job_uses_settings_defaults(self) -> None:

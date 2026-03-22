@@ -27,25 +27,33 @@ class WslBridge:
         "CONTENT_INGESTION_ANALYSIS_MODEL",
         "CONTENT_INGESTION_MULTIMODAL_MODEL",
         "CONTENT_INGESTION_WHISPER_MODEL",
+        "CONTENT_INGESTION_IMAGE_CARD_MODEL",
+        "CONTENT_INGESTION_IMAGE_CARD_BASE_URL",
     )
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     def doctor(self, *, shared_root: Path | None = None) -> str:
-        return self._run_app_command("doctor", shared_root=shared_root).stdout.strip()
+        resolved = shared_root or self.settings.effective_shared_inbox_root
+        return self._run_app_command("doctor", shared_root=resolved).stdout.strip()
 
     def validate_inbox(self, *, shared_root: Path | None = None) -> str:
-        return self._run_app_command("validate-inbox", shared_root=shared_root).stdout.strip()
+        resolved = shared_root or self.settings.effective_shared_inbox_root
+        return self._run_app_command("validate-inbox", shared_root=resolved).stdout.strip()
 
     def watch_once(self, *, shared_root: Path | None = None) -> str:
-        return self._run_app_command("watch-inbox --once", shared_root=shared_root).stdout.strip()
+        resolved = shared_root or self.settings.effective_shared_inbox_root
+        wsl_path = self._to_wsl_path(resolved)
+        return self._run_app_command(
+            f"watch-inbox {self._shell_quote(wsl_path)} --once", shared_root=resolved
+        ).stdout.strip()
 
     def start_watch(
         self,
         *,
         shared_root: Path | None = None,
-        interval_seconds: float = 5.0,
+        interval_seconds: float = 2.0,
     ) -> WslWatchState:
         if interval_seconds <= 0:
             raise WindowsClientError(
@@ -75,6 +83,7 @@ class WslBridge:
                 f"cd {self._shell_quote(self.settings.wsl_project_root)}",
                 (
                     f"{self.settings.wsl_python_executable} main.py watch-inbox "
+                    f"{self._shell_quote(wsl_shared_root)} "
                     f"--interval-seconds {interval_value} > {self._shell_quote(wsl_log_path)} 2>&1"
                 ),
             ]
@@ -103,6 +112,7 @@ class WslBridge:
             ["tasklist", "/FI", f"PID eq {state.pid}", "/FO", "CSV", "/NH"],
             capture_output=True,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         # tasklist output may be GBK on Chinese Windows; decode with both
         stdout_raw = result.stdout
@@ -145,6 +155,7 @@ class WslBridge:
             encoding="utf-8",
             errors="replace",
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         stopped = result.returncode == 0
         if stopped and self.settings.wsl_watch_state_path.exists():
@@ -205,6 +216,7 @@ class WslBridge:
             encoding="utf-8",
             errors="replace",
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if check and result.returncode != 0:
             raise WindowsClientError(

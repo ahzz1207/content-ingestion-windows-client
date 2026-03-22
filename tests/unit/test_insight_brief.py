@@ -91,6 +91,18 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
         self.assertIn("Q2", brief.gaps)
         self.assertIn("Step 1", brief.gaps)
 
+    def test_adapt_captures_synthesis_conclusion(self) -> None:
+        brief = adapt_from_structured_result(_make_result(), {}, None)
+        self.assertIsNotNone(brief)
+        self.assertEqual(brief.synthesis_conclusion, "Overall conclusion.")
+
+    def test_adapt_synthesis_conclusion_none_when_missing(self) -> None:
+        result = _make_result()
+        result["synthesis"] = {"final_answer": "", "open_questions": [], "next_steps": []}
+        brief = adapt_from_structured_result(result, {}, None)
+        self.assertIsNotNone(brief)
+        self.assertIsNone(brief.synthesis_conclusion)
+
     def test_adapt_resolves_evidence_refs(self) -> None:
         index = {
             "ev-1": EvidenceSnippet("ev-1", "Some text", 0, 1000, "transcript"),

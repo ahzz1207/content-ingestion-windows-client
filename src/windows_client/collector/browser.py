@@ -17,7 +17,7 @@ SUPPORTED_WAIT_FOR_SELECTOR_STATES = {"attached", "detached", "hidden", "visible
 @dataclass(slots=True)
 class BrowserCollectOptions:
     headless: bool = True
-    wait_until: str = "networkidle"
+    wait_until: str = "domcontentloaded"
     timeout_ms: int = 30000
     settle_ms: int = 1000
     profile_dir: Path | None = None

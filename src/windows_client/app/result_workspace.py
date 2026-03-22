@@ -78,14 +78,17 @@ def list_recent_results(shared_root: Path, *, limit: int = 20) -> list[ResultWor
     candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     results: list[ResultWorkspaceEntry] = []
     for job_dir in candidates[:limit]:
-        if job_dir.parent.name == "processed":
-            results.append(_load_processed_result(job_dir))
-        elif job_dir.parent.name == "failed":
-            results.append(_load_failed_result(job_dir))
-        elif job_dir.parent.name == "processing":
-            results.append(_load_processing_result(job_dir))
-        else:
-            results.append(_load_pending_result(job_dir))
+        try:
+            if job_dir.parent.name == "processed":
+                results.append(_load_processed_result(job_dir))
+            elif job_dir.parent.name == "failed":
+                results.append(_load_failed_result(job_dir))
+            elif job_dir.parent.name == "processing":
+                results.append(_load_processing_result(job_dir))
+            else:
+                results.append(_load_pending_result(job_dir))
+        except Exception:
+            continue
     return results
 
 
@@ -94,9 +97,11 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
     metadata_path = job_dir / "metadata.json"
     normalized_md_path = job_dir / "normalized.md"
     status_path = job_dir / "status.json"
+    if not normalized_json_path.exists():
+        raise FileNotFoundError(f"normalized.json not yet written: {normalized_json_path}")
     normalized = _read_json_file(normalized_json_path)
     asset = _coerce_dict(normalized.get("asset"))
-    status = _read_json_file(status_path)
+    status = _read_json_file(status_path) if status_path.exists() else {}
     metadata = _resolve_processed_metadata(normalized, asset)
     llm_processing = _coerce_dict(metadata.get("llm_processing"))
     structured_result = _coerce_dict(asset.get("result"))
@@ -113,15 +118,11 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
         markdown_exists=normalized_md_path.exists(),
     )
 
-    # Evidence resolver: build id→snippet index from text_request.json
     evidence_index = load_evidence_index(job_dir)
     _inject_resolved_evidence(structured_result, evidence_index)
-
-    # Coverage stats: detect transcript truncation
     coverage = compute_coverage(job_dir)
-
-    # InsightBriefV2: high-level brief for inline result view
     brief = adapt_from_structured_result(structured_result, evidence_index, coverage)
+    llm_image_input, visual_findings = _read_llm_image_input(analysis_json_path)
 
     details: dict[str, Any] = {
         "normalized": normalized,
@@ -130,6 +131,9 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
         "llm_processing": llm_processing,
         "structured_result": structured_result,
         "insight_brief": brief,
+        "llm_image_input": llm_image_input,
+        "visual_findings": visual_findings,
+        "insight_card_path": _resolve_insight_card_path(job_dir),
     }
     if coverage is not None:
         details["coverage"] = coverage
@@ -409,7 +413,7 @@ def _looks_unreadable_text(text: str) -> bool:
     meaningful_chars = sum(1 for ch in stripped if ch.isalnum() or _is_cjk_char(ch))
     if len(stripped) < 20 and meaningful_chars < 8:
         return True
-    return replacement_ratio > 0.02 or control_ratio > 0.01 or readable_ratio < 0.85
+    return replacement_ratio > 0.02 or control_ratio > 0.01 or readable_ratio < 0.70
 
 
 def _is_readable_preview_char(ch: str) -> bool:
@@ -418,9 +422,31 @@ def _is_readable_preview_char(ch: str) -> bool:
         return True
     if _is_cjk_char(ch):
         return True
+    # CJK extension: compatibility ideographs, radicals
+    if 0x2E80 <= codepoint <= 0x2FFF:
+        return True
+    # CJK punctuation & symbols, full-width forms
     if 0x3000 <= codepoint <= 0x303F:
         return True
     if 0xFF00 <= codepoint <= 0xFFEF:
+        return True
+    # Hiragana / Katakana
+    if 0x3040 <= codepoint <= 0x30FF:
+        return True
+    # Korean Hangul syllables
+    if 0xAC00 <= codepoint <= 0xD7AF:
+        return True
+    # Latin Extended (accented chars: é ü ñ etc.)
+    if 0x00C0 <= codepoint <= 0x02FF:
+        return True
+    # Cyrillic
+    if 0x0400 <= codepoint <= 0x04FF:
+        return True
+    # Arabic
+    if 0x0600 <= codepoint <= 0x06FF:
+        return True
+    # General punctuation (curly quotes, dashes, ellipsis …)
+    if 0x2000 <= codepoint <= 0x206F:
         return True
     return False
 
@@ -428,6 +454,29 @@ def _is_readable_preview_char(ch: str) -> bool:
 def _is_cjk_char(ch: str) -> bool:
     codepoint = ord(ch)
     return 0x4E00 <= codepoint <= 0x9FFF
+
+
+def _read_llm_image_input(path: Path | None) -> tuple[dict[str, Any], list[Any]]:
+    """Return (image_input_meta, visual_findings) from analysis_result.json."""
+    if path is None:
+        return {}, []
+    try:
+        data = _read_json_file(path)
+        image_meta = {
+            "image_input_truncated": bool(data.get("image_input_truncated", False)),
+            "image_input_count": int(data.get("image_input_count") or 0),
+            "image_selection_warnings": list(data.get("image_selection_warnings") or []),
+        }
+        raw_findings = data.get("visual_findings")
+        visual_findings = list(raw_findings) if isinstance(raw_findings, list) else []
+        return image_meta, visual_findings
+    except Exception:
+        return {}, []
+
+
+def _resolve_insight_card_path(job_dir: Path) -> Path | None:
+    p = job_dir / "analysis" / "insight_card.png"
+    return p if p.exists() else None
 
 
 def _coerce_str(value: object) -> str | None:

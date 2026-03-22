@@ -31,6 +31,7 @@ class InsightBriefV2:
     viewpoints: list[ViewpointItem]
     coverage: CoverageStats | None
     gaps: list[str]
+    synthesis_conclusion: str | None = None
 
 
 def adapt_from_structured_result(
@@ -78,14 +79,14 @@ def adapt_from_structured_result(
         for item in key_points:
             if not isinstance(item, dict):
                 continue
-            statement = str(item.get("details") or item.get("title") or "").strip()
+            statement = str(item.get("title") or "").strip()
             if not statement:
                 continue
             viewpoints.append(
                 ViewpointItem(
                     statement=statement,
                     kind="key_point",
-                    why_it_matters=str(item.get("why_it_matters") or "").strip() or None,
+                    why_it_matters=str(item.get("details") or "").strip() or None,
                     support_level=str(item.get("support_level") or "").strip() or None,
                     evidence_refs=resolve_evidence_for_item(item, evidence_index),
                 )
@@ -127,9 +128,10 @@ def adapt_from_structured_result(
                 )
             )
 
-    # gaps: open_questions + next_steps from synthesis
+    # gaps: open_questions + next_steps from synthesis; conclusion from final_answer
     synthesis = result.get("synthesis")
     gaps: list[str] = []
+    synthesis_conclusion: str | None = None
     if isinstance(synthesis, dict):
         open_questions = synthesis.get("open_questions")
         if isinstance(open_questions, list):
@@ -137,6 +139,9 @@ def adapt_from_structured_result(
         next_steps = synthesis.get("next_steps")
         if isinstance(next_steps, list):
             gaps.extend(str(s) for s in next_steps if s)
+        final_answer = str(synthesis.get("final_answer") or "").strip()
+        if final_answer:
+            synthesis_conclusion = final_answer
 
     return InsightBriefV2(
         hero=hero,
@@ -144,4 +149,5 @@ def adapt_from_structured_result(
         viewpoints=viewpoints,
         coverage=coverage,
         gaps=gaps,
+        synthesis_conclusion=synthesis_conclusion,
     )

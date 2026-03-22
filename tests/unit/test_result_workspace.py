@@ -9,7 +9,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from windows_client.app.result_workspace import list_recent_results, load_job_result, load_latest_result
+from windows_client.app.result_workspace import _looks_unreadable_text, list_recent_results, load_job_result, load_latest_result
 
 
 class ResultWorkspaceTests(unittest.TestCase):
@@ -247,6 +247,111 @@ class ResultWorkspaceTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result.analysis_json_path, analysis_path)
+
+    def test_llm_image_input_read_when_present(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-image-trunc"
+        (job_dir / "analysis" / "llm").mkdir(parents=True)
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-image-trunc"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps({"job_id": "job-image-trunc", "asset": {"metadata": {"llm_processing": {"status": "pass"}}}}),
+            encoding="utf-8",
+        )
+        analysis_path = job_dir / "analysis" / "llm" / "analysis_result.json"
+        analysis_path.write_text(
+            json.dumps({"status": "pass", "image_input_truncated": True, "image_input_count": 8}),
+            encoding="utf-8",
+        )
+
+        result = load_job_result(self.shared_root, "job-image-trunc")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        llm_image = result.details.get("llm_image_input", {})
+        self.assertTrue(llm_image.get("image_input_truncated"))
+        self.assertEqual(llm_image.get("image_input_count"), 8)
+
+    def test_llm_image_input_empty_when_no_analysis_file(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-no-analysis"
+        job_dir.mkdir(parents=True)
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-no-analysis"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps({"job_id": "job-no-analysis", "asset": {"metadata": {"llm_processing": {"status": "skipped", "skip_reason": "no key"}}}}),
+            encoding="utf-8",
+        )
+
+        result = load_job_result(self.shared_root, "job-no-analysis")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        llm_image = result.details.get("llm_image_input", {})
+        self.assertFalse(llm_image.get("image_input_truncated", False))
+
+    def test_visual_findings_populated_from_analysis_json(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-visual"
+        (job_dir / "analysis" / "llm").mkdir(parents=True)
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-visual"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps({"job_id": "job-visual", "asset": {"metadata": {"llm_processing": {"status": "pass"}}}}),
+            encoding="utf-8",
+        )
+        analysis_path = job_dir / "analysis" / "llm" / "analysis_result.json"
+        analysis_path.write_text(
+            json.dumps({
+                "status": "pass",
+                "visual_findings": [
+                    {"id": "vf-1", "frame_timestamp_ms": 12000, "description": "Speaker holds document", "relevance": "high"},
+                    {"id": "vf-2", "frame_timestamp_ms": 30000, "description": "Chart shown on screen", "relevance": "medium"},
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        result = load_job_result(self.shared_root, "job-visual")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        findings = result.details.get("visual_findings", [])
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(findings[0]["description"], "Speaker holds document")
+        self.assertEqual(findings[1]["frame_timestamp_ms"], 30000)
+
+    def test_visual_findings_empty_when_absent(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-no-visual"
+        (job_dir / "analysis" / "llm").mkdir(parents=True)
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-no-visual"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps({"job_id": "job-no-visual", "asset": {"metadata": {"llm_processing": {"status": "pass"}}}}),
+            encoding="utf-8",
+        )
+        analysis_path = job_dir / "analysis" / "llm" / "analysis_result.json"
+        analysis_path.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+
+        result = load_job_result(self.shared_root, "job-no-visual")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.details.get("visual_findings"), [])
+
+
+class LooksUnreadableTextTests(unittest.TestCase):
+    def test_binary_garbage_is_unreadable(self) -> None:
+        text = "\ufffd\x08\x00\x00\x00\x00\x00\x04\x03\ufffd{w\x13G\ufffd7\ufffd\ufffd\ufffd) | something"
+        self.assertTrue(_looks_unreadable_text(text))
+
+    def test_plain_english_is_readable(self) -> None:
+        self.assertFalse(_looks_unreadable_text("This is a normal English paragraph."))
+
+    def test_chinese_text_is_readable(self) -> None:
+        self.assertFalse(_looks_unreadable_text("这是一段正常的中文内容，用于测试。"))
+
+    def test_japanese_hiragana_is_readable(self) -> None:
+        self.assertFalse(_looks_unreadable_text("これはひらがなのテストです。"))
+
+    def test_japanese_katakana_is_readable(self) -> None:
+        self.assertFalse(_looks_unreadable_text("コンテンツのテキストサンプルです。"))
+
+    def test_korean_hangul_is_readable(self) -> None:
+        self.assertFalse(_looks_unreadable_text("이것은 한국어 테스트 텍스트입니다."))
 
 
 if __name__ == "__main__":

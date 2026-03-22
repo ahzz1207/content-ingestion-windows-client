@@ -26,7 +26,7 @@ class YtDlpVideoDownloaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name) / "download-run"
 
-            def _fake_run(command, capture_output, text, encoding, errors):
+            def _fake_run(command, capture_output, text, encoding, errors, **kwargs):
                 output_template = Path(command[command.index("--output") + 1])
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 (temp_dir / "video.mp3").write_bytes(b"audio-bytes")
@@ -130,7 +130,7 @@ class YtDlpVideoDownloaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name) / "download-run"
 
-            def _fake_run(command, capture_output, text, encoding, errors):
+            def _fake_run(command, capture_output, text, encoding, errors, **kwargs):
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 (temp_dir / "video.mp4").write_bytes(b"video-bytes")
 

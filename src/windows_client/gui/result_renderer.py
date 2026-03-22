@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import html
 import json
+import re
+from datetime import datetime
 
 from PySide6.QtWidgets import QLabel
 
@@ -164,7 +166,10 @@ def _primary_result_button_text(entry: ResultWorkspaceEntry) -> str:
 PREVIEW_STYLESHEET = """
 .preview-reading p {
     margin: 0 0 14px 0;
-    line-height: 1.7;
+    line-height: 1.85;
+}
+.preview-reading p:first-child {
+    margin-top: 0;
 }
 .structured-result {
     display: block;
@@ -181,9 +186,9 @@ PREVIEW_STYLESHEET = """
 }
 .result-section h2 {
     margin: 0 0 10px 0;
-    font-size: 14px;
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
     color: #8f3f25;
 }
 .result-section h3 {
@@ -193,7 +198,7 @@ PREVIEW_STYLESHEET = """
 }
 .result-card {
     margin: 0 0 14px 0;
-    padding: 14px 16px;
+    padding: 16px 20px;
     background: rgba(255, 255, 255, 0.76);
     border: 1px solid rgba(172, 139, 108, 0.12);
     border-radius: 16px;
@@ -474,3 +479,88 @@ def _preview_hint(entry: ResultWorkspaceEntry) -> str:
     if entry.state == "processing":
         return "Being analysed. Metadata below reflects the latest state."
     return "Queued for analysis. Details below come from the capture metadata."
+
+
+# ---------------------------------------------------------------------------
+# Markdown export
+# ---------------------------------------------------------------------------
+
+
+def entry_to_markdown(entry: ResultWorkspaceEntry) -> str:
+    """Serialise a ResultWorkspaceEntry to clean Markdown for clipboard/save."""
+    brief = entry.details.get("insight_brief")
+
+    if brief is not None:
+        title = brief.hero.title
+        one_take = brief.hero.one_sentence_take
+        conclusion = brief.synthesis_conclusion
+        takeaways = list(brief.quick_takeaways)
+        gaps = list(brief.gaps)
+    else:
+        title = entry.title or "Untitled"
+        one_take = entry.summary or ""
+        conclusion = None
+        takeaways = []
+        gaps = []
+
+    lines: list[str] = [f"# {title}", ""]
+
+    byline_parts = [v for v in (entry.author, entry.published_at, entry.platform) if v]
+    if byline_parts:
+        lines.append("**" + "** · **".join(byline_parts) + "**")
+        lines.append("")
+
+    source = entry.source_url or entry.canonical_url
+    if source:
+        lines += [f"Source: {source}", ""]
+
+    if one_take:
+        lines += ["## Summary", "", one_take, ""]
+
+    if takeaways:
+        lines.append("## Key Points")
+        lines.append("")
+        for i, point in enumerate(takeaways, start=1):
+            lines.append(f"{i}. {point}")
+        lines.append("")
+
+    if conclusion:
+        lines += ["## Bottom Line", "", conclusion, ""]
+
+    if gaps:
+        lines.append("## Questions & Next Steps")
+        lines.append("")
+        for gap in gaps:
+            lines.append(f"- {gap}")
+        lines.append("")
+
+    visual_findings = [f for f in entry.details.get("visual_findings") or [] if isinstance(f, dict)]
+    if visual_findings:
+        lines.append("## Visual Evidence")
+        lines.append("")
+        for finding in visual_findings:
+            description = str(finding.get("description") or "").strip()
+            if not description:
+                continue
+            ts_ms = finding.get("frame_timestamp_ms")
+            if ts_ms is not None:
+                try:
+                    m, s = divmod(int(ts_ms) // 1000, 60)
+                    prefix = f"[{m}:{s:02d}] "
+                except (TypeError, ValueError):
+                    prefix = ""
+            else:
+                prefix = ""
+            lines.append(f"- {prefix}{description}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _markdown_filename(entry: ResultWorkspaceEntry) -> str:
+    """Return a safe default filename like '2026-03-22-article-title.md'."""
+    date_prefix = datetime.today().strftime("%Y-%m-%d")
+    raw = entry.title or "result"
+    slug = re.sub(r"[^\w]+", "-", raw, flags=re.UNICODE).strip("-").lower()[:48]
+    slug = slug or "result"
+    return f"{date_prefix}-{slug}.md"

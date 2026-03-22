@@ -76,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     wsl_start_watch = subparsers.add_parser("wsl-start-watch")
     wsl_start_watch.add_argument("--shared-root", type=Path)
-    wsl_start_watch.add_argument("--interval-seconds", type=float, default=5.0)
+    wsl_start_watch.add_argument("--interval-seconds", type=float, default=2.0)
 
     subparsers.add_parser("wsl-watch-status")
     subparsers.add_parser("wsl-stop-watch")
@@ -155,12 +155,13 @@ def _launch_gui_detached() -> bool:
 
     env = dict(os.environ)
     env[_GUI_DETACHED_ENV] = "1"
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     subprocess.Popen(
         [sys.executable, str(_project_root() / "main.py"), "gui"],
         cwd=str(_project_root()),
         env=env,
         close_fds=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        creationflags=creationflags,
     )
     return True
 

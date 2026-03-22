@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import threading
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal as _Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -29,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from windows_client.app.result_workspace import ResultWorkspaceEntry, list_recent_results, load_job_result
+from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
 from windows_client.app.view_models import OperationViewState
 from windows_client.app.workflow import WindowsClientWorkflow
 from windows_client.app.wsl_bridge import WslBridge
@@ -46,23 +47,44 @@ from windows_client.gui.workers import WorkflowTaskThread
 
 STAGE_LABELS = {
     "idle": "Ready",
-    "analyzing_url": "Checking link",
-    "checking_runtime": "Checking browser",
-    "opening_browser": "Opening browser",
-    "waiting_for_login": "Waiting for login",
-    "collecting": "Capturing page",
-    "exporting": "Writing job",
-    "done": "Done",
-    "failed": "Failed",
+    "analyzing_url": "正在检查链接…",
+    "checking_runtime": "正在启动浏览器…",
+    "opening_browser": "正在打开浏览器…",
+    "waiting_for_login": "等待登录…",
+    "collecting": "正在采集页面内容…",
+    "downloading_video": "正在下载视频（通常需要 1–3 分钟）…",
+    "exporting": "正在打包任务…",
+    "processing": "AI 正在分析中…",
+    "transcript_done": "转录完成，AI 正在分析中…",
+    "awaiting_llm": "正在等待 LLM 响应…",
+    "done": "完成",
+    "failed": "处理失败",
 }
 
 RESULT_REFRESH_INTERVAL_SECONDS = 2.0
-AUTO_RESULT_POLL_INTERVAL_MS = 3000
-AUTO_RESULT_POLL_MAX_ATTEMPTS = 20
+AUTO_RESULT_POLL_INTERVAL_MS = 3000        # first 60s: fast
+AUTO_RESULT_POLL_SLOW_INTERVAL_MS = 10_000  # 60s–5min: patient wait for transcription
+AUTO_RESULT_POLL_VERY_SLOW_MS = 20_000      # 5min–12min: long video
+AUTO_RESULT_POLL_TIMEOUT_SECONDS = 720      # hard cap: 12 minutes
 
 
 def _safe_domain(url: str) -> str:
     return urlparse(url).netloc or url
+
+
+def _normalize_url(url: str) -> str:
+    """Strip known tracking/session params from platform URLs."""
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    if "mp.weixin.qq.com" in netloc:
+        keep = {"__biz", "mid", "sn", "idx"}
+        qs = {k: v for k, v in parse_qs(parsed.query, keep_blank_values=False).items() if k in keep}
+        return urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+    if "bilibili.com" in netloc:
+        qs = parse_qs(parsed.query, keep_blank_values=False)
+        filtered = {k: v for k, v in qs.items() if k == "p"}
+        return urlunparse(parsed._replace(query=urlencode(filtered, doseq=True) if filtered else ""))
+    return url
 
 
 def _friendly_error_summary(state: OperationViewState) -> str:
@@ -76,6 +98,15 @@ def _friendly_error_summary(state: OperationViewState) -> str:
         return "The page could not be fetched directly. A browser retry may help."
     if state.error.code == "invalid_source_url":
         return "This link format is not supported."
+    if state.error.code == "video_download_failed":
+        stderr = (state.error.details or {}).get("stderr", "")
+        last_error = next(
+            (ln.strip() for ln in reversed(stderr.splitlines()) if ln.strip()),
+            "",
+        )
+        return f"视频下载失败。{(' — ' + last_error) if last_error else ''}"
+    if state.error.code == "video_download_requires_ffmpeg":
+        return "视频下载需要 ffmpeg，请先安装 ffmpeg。"
     return state.summary
 
 
@@ -217,6 +248,8 @@ class LoginPromptDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
+    _status_ready = _Signal(object, object)  # (doctor_state, watcher_status) — thread-safe delivery
+
     def __init__(self, *, workflow: WindowsClientWorkflow) -> None:
         super().__init__()
         self.workflow = workflow
@@ -226,10 +259,15 @@ class MainWindow(QMainWindow):
         self._current_url: str = ""
         self._current_state: OperationViewState | None = None
         self._latest_result_entry: ResultWorkspaceEntry | None = None
+        self._watcher_running: bool | None = None  # cached from last status refresh
         self._result_poll_timer = QTimer(self)
         self._result_poll_timer.setSingleShot(True)
         self._result_poll_timer.timeout.connect(self._poll_current_job_result)
-        self._result_poll_attempts = 0
+        self._result_poll_start_time: float = 0.0
+        self._last_inferred_stage: str = ""
+        self._watcher_poll_timer = QTimer(self)
+        self._watcher_poll_timer.setInterval(15_000)
+        self._watcher_poll_timer.timeout.connect(self._poll_watcher_status)
 
         self.setWindowTitle("Collect")
         self.resize(980, 700)
@@ -237,7 +275,11 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._apply_styles()
-        self._refresh_environment_status()
+        self._status_ready.connect(self._apply_status_result)
+        # Show placeholder immediately so the window opens without blocking
+        self._set_pills([("Checking status…", True)])
+        self._launch_status_refresh()
+        self._watcher_poll_timer.start()
         self._show_ready_state()
 
     def _build_ui(self) -> None:
@@ -274,7 +316,9 @@ class MainWindow(QMainWindow):
         self.ready_page = self._build_ready_page()
         self.task_page = self._build_task_page()
         self.result_inline = InlineResultView(parent=self)
-        self.result_inline.back_button.clicked.connect(self._show_task_state)
+        self.result_inline.new_url_button.clicked.connect(self._reset_to_ready_state)
+        self.result_inline.reanalyze_requested.connect(self._reanalyze_url)
+        self.result_inline.history_button.clicked.connect(self._open_history_from_result)
         self.stack.addWidget(self.ready_page)
         self.stack.addWidget(self.task_page)
         self.stack.addWidget(self.result_inline)
@@ -332,7 +376,7 @@ class MainWindow(QMainWindow):
         self.start_button.setCursor(Qt.PointingHandCursor)
         self.start_button.clicked.connect(self._start_from_input)
         self.start_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.latest_result_button = QPushButton("Result Workspace")
+        self.latest_result_button = QPushButton("History")
         self.latest_result_button.setObjectName("GhostButton")
         self.latest_result_button.clicked.connect(self._open_latest_result)
         self.latest_result_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -386,9 +430,16 @@ class MainWindow(QMainWindow):
         self.platform_label.setObjectName("PlatformPill")
         self.stage_label = QLabel("")
         self.stage_label.setObjectName("StageText")
+        self._elapsed_label = QLabel("")
+        self._elapsed_label.setObjectName("ElapsedText")
+        self._elapsed_label.hide()
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._update_elapsed)
+        self._task_start_time: float = 0.0
 
         self.result_title = QLabel("")
         self.result_title.setObjectName("ResultTitle")
@@ -414,23 +465,15 @@ class MainWindow(QMainWindow):
         self.retry_browser_button = QPushButton("Retry in Browser")
         self.retry_browser_button.setObjectName("GhostButton")
         self.retry_browser_button.clicked.connect(self._retry_in_browser)
-        self.open_result_button = QPushButton("Open Result")
-        self.open_result_button.setObjectName("GhostButton")
-        self.open_result_button.clicked.connect(self._open_current_job_result)
-        self.open_folder_button = QPushButton("Open Folder")
-        self.open_folder_button.setObjectName("GhostButton")
-        self.open_folder_button.clicked.connect(self._open_job_folder)
-        self.copy_job_id_button = QPushButton("Copy Job ID")
-        self.copy_job_id_button.setObjectName("GhostButton")
-        self.copy_job_id_button.clicked.connect(self._copy_job_id)
+        self.retry_button = QPushButton("Retry")
+        self.retry_button.setObjectName("GhostButton")
+        self.retry_button.clicked.connect(self._retry_current_url)
         self.new_url_button = QPushButton("New URL")
         self.new_url_button.setObjectName("PrimaryButton")
         self.new_url_button.clicked.connect(self._reset_to_ready_state)
         for button in (
             self.retry_browser_button,
-            self.open_result_button,
-            self.open_folder_button,
-            self.copy_job_id_button,
+            self.retry_button,
             self.new_url_button,
         ):
             self.action_row.addWidget(button)
@@ -451,6 +494,7 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(self.domain_label)
         card_layout.addWidget(self.platform_label, 0, Qt.AlignLeft)
         card_layout.addWidget(self.stage_label)
+        card_layout.addWidget(self._elapsed_label)
         card_layout.addWidget(self.progress_bar)
         card_layout.addWidget(self.result_title)
         card_layout.addWidget(self.result_summary)
@@ -518,6 +562,25 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
                 font-weight: 700;
                 color: #a34b2d;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }
+            #SectionLabelBlue {
+                font-size: 12px;
+                font-weight: 700;
+                color: #2563eb;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }
+            #HeroTake {
+                font-size: 18px;
+                font-weight: 500;
+                color: #16202b;
+            }
+            #TakeawayIndexed {
+                font-size: 15px;
+                font-weight: 600;
+                color: #2f4558;
             }
             #BodyText {
                 font-size: 15px;
@@ -526,6 +589,10 @@ class MainWindow(QMainWindow):
             #SecondaryText {
                 font-size: 14px;
                 color: #6b7280;
+            }
+            #ElapsedText {
+                font-size: 13px;
+                color: #9ca3af;
             }
             #PlatformPill {
                 background: rgba(163, 75, 45, 0.10);
@@ -555,6 +622,64 @@ class MainWindow(QMainWindow):
                 background: rgba(248, 243, 236, 0.92);
                 border: 1px solid rgba(172, 139, 108, 0.12);
                 border-radius: 20px;
+            }
+            #BottomLineCard {
+                background: rgba(37, 99, 235, 0.06);
+                border: 1px solid rgba(37, 99, 235, 0.18);
+                border-radius: 14px;
+            }
+            QFrame#InsightCardFrame {
+                background: transparent;
+                border: none;
+            }
+            #CoverageBanner {
+                background: rgba(239, 68, 68, 0.10);
+                border: 1px solid rgba(239, 68, 68, 0.24);
+                border-radius: 14px;
+            }
+            #VerificationCard {
+                background: rgba(255, 255, 255, 0.60);
+                border: 1px solid rgba(148, 163, 184, 0.18);
+                border-radius: 12px;
+            }
+            #VerifChip_supported {
+                background: rgba(22, 163, 74, 0.13);
+                color: #15803d;
+                border-radius: 10px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            #VerifChip_partial {
+                background: rgba(245, 158, 11, 0.14);
+                color: #b45309;
+                border-radius: 10px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            #VerifChip_unsupported, #VerifChip_unclear {
+                background: rgba(220, 38, 38, 0.10);
+                color: #b91c1c;
+                border-radius: 10px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            #TagChip {
+                background: rgba(163, 75, 45, 0.09);
+                color: #8f3f25;
+                border-radius: 10px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            #TagChipMuted {
+                background: rgba(148, 163, 184, 0.12);
+                color: #475569;
+                border-radius: 10px;
+                padding: 3px 10px;
+                font-size: 12px;
             }
             QListWidget#ResultList {
                 background: transparent;
@@ -627,7 +752,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid rgba(172, 139, 108, 0.12);
                 background: rgba(255, 251, 247, 0.92);
                 padding: 20px;
-                font-size: 15px;
+                font-size: 16px;
                 color: #233445;
                 selection-background-color: rgba(163, 75, 45, 0.16);
             }
@@ -665,12 +790,41 @@ class MainWindow(QMainWindow):
             self.pills_layout.addWidget(pill)
         self.pills_layout.addStretch(1)
 
-    def _refresh_environment_status(self) -> None:
-        state = self.workflow.run_doctor()
-        if state.status != "success" or state.doctor is None:
-            self._set_pills([("Status unavailable", False)])
+    def _launch_status_refresh(self) -> None:
+        """Fetch doctor + watcher status in a background thread; emit signal to update UI."""
+        def _worker() -> None:
+            try:
+                doctor_state = self.workflow.run_doctor()
+            except Exception:
+                doctor_state = None
+            try:
+                watcher_status = self.wsl_bridge.watch_status()
+            except Exception:
+                watcher_status = None
+            self._status_ready.emit(doctor_state, watcher_status)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_status_result(
+        self,
+        doctor_state: object,
+        watcher_status: dict[str, str] | None,
+    ) -> None:
+        """Update the header pills from pre-fetched doctor + watcher data (main thread)."""
+        running = watcher_status.get("running") == "True" if watcher_status else False
+        self._watcher_running = running
+
+        from windows_client.app.view_models import OperationViewState  # local to avoid circular
+        if (
+            not isinstance(doctor_state, OperationViewState)
+            or doctor_state.status != "success"
+            or doctor_state.doctor is None
+        ):
+            watcher_pill = "WSL 处理中 ●" if running else "WSL 未运行 ○"
+            self._set_pills([("Status unavailable", False), (watcher_pill, running)])
             return
-        values = state.doctor.values
+
+        values = doctor_state.doctor.values
         pills = [
             ("Browser ready" if values.get("browser_collector_available") == "True" else "Browser unavailable",
              values.get("browser_collector_available") == "True"),
@@ -687,23 +841,27 @@ class MainWindow(QMainWindow):
                 values.get("wsl_whisper_model_override") not in {None, "", "default"},
             ),
         ]
-        try:
-            watcher_status = self.wsl_bridge.watch_status()
-        except Exception:
-            watcher_status = None
         if watcher_status is None:
-            pills.append(("Processor not started", False))
+            pills.append(("WSL 未启动 ○", False))
         else:
-            pills.append(
-                (
-                    "Processor running" if watcher_status.get("running") == "True" else "Processor stopped",
-                    watcher_status.get("running") == "True",
-                )
-            )
+            pills.append(("WSL 处理中 ●" if running else "WSL 已停止 ○", running))
         profiles_dir = Path(values.get("browser_profiles_dir", ""))
         for slug, label in (("wechat", "WeChat profile"), ("xiaohongshu", "Xiaohongshu profile"), ("youtube", "YouTube profile")):
             pills.append((f"{label} ready" if (profiles_dir / slug).exists() else f"{label} missing", (profiles_dir / slug).exists()))
         self._set_pills(pills)
+
+    def _poll_watcher_status(self) -> None:
+        """Lightweight periodic check — only re-fetches watcher state (no WSL subprocess)."""
+        try:
+            watcher_status = self.wsl_bridge.watch_status()
+        except Exception:
+            watcher_status = None
+        running = watcher_status.get("running") == "True" if watcher_status else False
+        if running != self._watcher_running:
+            self._launch_status_refresh()
+
+    def _refresh_environment_status(self) -> None:
+        self._launch_status_refresh()
 
     def _show_ready_state(self) -> None:
         if self._task_thread is not None and self._task_thread.isRunning():
@@ -735,9 +893,23 @@ class MainWindow(QMainWindow):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             QMessageBox.warning(self, "Unsupported URL", "Please enter a full http or https URL.")
             return
+        url = _normalize_url(url)
         self._current_url = url
         route = resolve_platform_route(url)
         self._current_route = route
+        # Warn if WSL watcher appears to be stopped — use cached status, no blocking call
+        if not self._watcher_running:
+            answer = QMessageBox.question(
+                self,
+                "Processor not running",
+                "The WSL processor doesn't appear to be running.\n"
+                "The job will be queued but may not be analysed automatically.\n\n"
+                "Continue anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer != QMessageBox.Yes:
+                return
         if route.strategy == "browser" and not route.profile_exists(self.workflow.service.settings):
             dialog = LoginPromptDialog(parent=self, workflow=self.workflow, route=route)
             if not dialog.exec_and_confirm():
@@ -796,15 +968,17 @@ class MainWindow(QMainWindow):
         self.details_text.hide()
         self.details_toggle.hide()
         self.retry_browser_button.hide()
-        self.open_result_button.hide()
-        self.open_folder_button.hide()
-        self.copy_job_id_button.hide()
+        self.retry_button.hide()
         self.new_url_button.hide()
         self._set_meta_grid_visible(False)
         for value_label in self.meta_labels.values():
             value_label.clear()
         self.progress_bar.show()
         self.back_button.setEnabled(False)
+        self._task_start_time = time.monotonic()
+        self._elapsed_label.setText("已用时 00:00")
+        self._elapsed_label.show()
+        self._elapsed_timer.start()
 
     def _sync_video_download_controls(self, text: str) -> None:
         route = resolve_platform_route(text.strip()) if text.strip() else None
@@ -822,9 +996,10 @@ class MainWindow(QMainWindow):
 
     def _on_task_completed(self, state: OperationViewState) -> None:
         self._current_state = state
+        self._elapsed_timer.stop()
+        self._elapsed_label.hide()
         self.back_button.setEnabled(True)
         self.progress_bar.hide()
-        self.new_url_button.show()
         if state.status == "success":
             self.stage_label.setText(STAGE_LABELS["done"])
             self._render_success(state)
@@ -834,6 +1009,8 @@ class MainWindow(QMainWindow):
         self._task_thread = None
 
     def _on_task_crashed(self, message: str) -> None:
+        self._elapsed_timer.stop()
+        self._elapsed_label.hide()
         self._stop_result_polling()
         self.back_button.setEnabled(True)
         self.progress_bar.hide()
@@ -860,8 +1037,9 @@ class MainWindow(QMainWindow):
         details_text = json.dumps(metadata, ensure_ascii=False, indent=2) if metadata else "No technical details are available."
         self.details_text.setPlainText(details_text)
         self.details_toggle.show()
-        self.open_folder_button.show()
-        self.copy_job_id_button.show()
+        self.stage_label.setText(STAGE_LABELS["processing"])
+        self._elapsed_label.show()
+        self._elapsed_timer.start()
         self._refresh_current_job_result()
         self._start_result_polling()
 
@@ -887,6 +1065,7 @@ class MainWindow(QMainWindow):
                 details["cause_type"] = state.error.cause_type
         self.details_text.setPlainText(json.dumps(details, ensure_ascii=False, indent=2))
         self.details_toggle.show()
+        self.new_url_button.show()
         if self._current_route is not None and self._current_route.strategy == "http":
             self.retry_browser_button.show()
 
@@ -895,54 +1074,69 @@ class MainWindow(QMainWindow):
             return
         self._run_export(route=self._current_route, url=self._current_url, force_browser=True)
 
+    def _retry_current_url(self) -> None:
+        if self._current_route is None or not self._current_url:
+            return
+        self._run_export(route=self._current_route, url=self._current_url)
+
+    def _reanalyze_url(self, url: str) -> None:
+        self.url_input.setText(url)
+        self._start_from_input()
+
     def _toggle_details(self, visible: bool) -> None:
         self.details_toggle.setText("Hide technical details" if visible else "Show technical details")
         self.details_text.setVisible(visible)
 
-    def _open_job_folder(self) -> None:
-        if self._current_state is None or self._current_state.job is None:
-            return
-        job_dir = self._current_state.job.job_dir
-        if os.name == "nt":
-            os.startfile(job_dir)  # type: ignore[attr-defined]
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(job_dir)))
-
-    def _copy_job_id(self) -> None:
-        if self._current_state is None or self._current_state.job is None:
-            return
-        from PySide6.QtWidgets import QApplication
-
-        QApplication.clipboard().setText(self._current_state.job.job_id)
-
     def _open_latest_result(self) -> None:
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
-        entries = list_recent_results(shared_root, limit=24)
-        if not entries:
-            QMessageBox.information(self, "No results yet", "No results are available yet.")
-            return
         self._show_result_workspace(shared_root=shared_root, selected_job_id=None)
 
+    def _open_history_from_result(self) -> None:
+        """Open history dialog from the result view; return to ready page if nothing is selected."""
+        shared_root = self.workflow.service.settings.effective_shared_inbox_root
+        job_id = self._latest_result_entry.job_id if self._latest_result_entry else None
+        # Navigate away from the result view first so closing the dialog
+        # without selecting a new entry lands on the ready page, not the old result.
+        self._reset_to_ready_state()
+        self._show_result_workspace(shared_root=shared_root, selected_job_id=job_id)
+
     def _start_result_polling(self) -> None:
-        self._result_poll_attempts = 0
+        self._result_poll_start_time = time.monotonic()
+        self._last_inferred_stage = ""
         self._schedule_result_poll()
+
+    def _update_elapsed(self) -> None:
+        elapsed = int(time.monotonic() - self._task_start_time)
+        minutes, seconds = divmod(elapsed, 60)
+        self._elapsed_label.setText(f"已用时 {minutes:02d}:{seconds:02d}")
 
     def _stop_result_polling(self) -> None:
         self._result_poll_timer.stop()
-        self._result_poll_attempts = 0
+
+    def _poll_elapsed_seconds(self) -> float:
+        """Seconds since result polling started."""
+        if self._result_poll_start_time == 0.0:
+            return 0.0
+        return time.monotonic() - self._result_poll_start_time
 
     def _schedule_result_poll(self) -> None:
-        if self._result_poll_attempts >= AUTO_RESULT_POLL_MAX_ATTEMPTS:
+        elapsed = self._poll_elapsed_seconds()
+        if elapsed >= AUTO_RESULT_POLL_TIMEOUT_SECONDS:
             return
-        self._result_poll_timer.start(AUTO_RESULT_POLL_INTERVAL_MS)
+        if elapsed >= 300:  # 5 min+: very slow
+            interval = AUTO_RESULT_POLL_VERY_SLOW_MS
+        elif elapsed >= 60:  # 1–5 min: slow
+            interval = AUTO_RESULT_POLL_SLOW_INTERVAL_MS
+        else:
+            interval = AUTO_RESULT_POLL_INTERVAL_MS
+        self._result_poll_timer.start(interval)
 
     def _poll_current_job_result(self) -> None:
-        self._result_poll_attempts += 1
         state = self._refresh_current_job_result(from_auto_poll=True)
         if state in {"processed", "failed"}:
             self._stop_result_polling()
             return
-        if self._result_poll_attempts >= AUTO_RESULT_POLL_MAX_ATTEMPTS:
+        if self._poll_elapsed_seconds() >= AUTO_RESULT_POLL_TIMEOUT_SECONDS:
             self.result_summary.setText(
                 "Analysis is still in progress. Check back later."
             )
@@ -953,7 +1147,10 @@ class MainWindow(QMainWindow):
         if self._current_state is None or self._current_state.job is None:
             return "unavailable"
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
-        result_entry = load_job_result(shared_root, self._current_state.job.job_id)
+        try:
+            result_entry = load_job_result(shared_root, self._current_state.job.job_id)
+        except Exception:
+            return "unavailable"
         if result_entry is None:
             self.result_summary.setText(
                 "No analysis result yet."
@@ -961,44 +1158,44 @@ class MainWindow(QMainWindow):
                 else "Waiting for the processor to pick this up..."
             )
             self._latest_result_entry = None
-            self.open_result_button.hide()
             return "missing"
         if result_entry.state == "processed":
-            self.result_summary.setText(result_entry.summary)
-            self.open_result_button.setText("Open Result")
-            self.open_result_button.show()
             self._latest_result_entry = result_entry
-            # Navigate to inline result view if a brief is available
             brief = result_entry.details.get("insight_brief")
-            if brief is not None:
-                self.result_inline.load_brief(brief, entry=result_entry)
-                self.stack.setCurrentWidget(self.result_inline)
+            self.result_inline.load_entry(result_entry, brief=brief)
+            self._stop_result_polling()
+            self._elapsed_timer.stop()
+            self._elapsed_label.hide()
+            self.stack.setCurrentWidget(self.result_inline)
             return "processed"
         if result_entry.state == "failed":
-            self.result_summary.setText("Processing failed. Open the result workspace for details.")
-            self.open_result_button.setText("Open Failed Result")
-            self.open_result_button.show()
+            error_msg = result_entry.summary or "Processing failed."
+            if len(error_msg) > 300:
+                error_msg = error_msg[:297] + "..."
+            self.result_summary.setText(f"Processing failed: {error_msg}")
+            self.result_summary.show()
+            self.retry_button.show()
+            self.new_url_button.show()
             self._latest_result_entry = result_entry
             return "failed"
+        if result_entry.state == "processing" and result_entry.job_id:
+            inferred = self._infer_processing_stage(
+                shared_root / "processing" / result_entry.job_id
+            )
+            if inferred != self._last_inferred_stage:
+                self._last_inferred_stage = inferred
+                self.stage_label.setText(inferred)
         self.result_summary.setText(result_entry.summary)
-        self.open_result_button.setText("Track in Workspace")
-        self.open_result_button.show()
         self._latest_result_entry = result_entry
         return result_entry.state
 
-    def _open_current_job_result(self) -> None:
-        result_entry = getattr(self, "_latest_result_entry", None)
-        if result_entry is None:
-            self._refresh_current_job_result()
-            result_entry = getattr(self, "_latest_result_entry", None)
-        if result_entry is None:
-            QMessageBox.information(self, "Result unavailable", "No result is available for this job yet.")
-            return
-        shared_root = self.workflow.service.settings.effective_shared_inbox_root
-        self._show_result_workspace(shared_root=shared_root, selected_job_id=result_entry.job_id)
-        refreshed_state = self._refresh_current_job_result()
-        if refreshed_state not in {"processed", "failed", "unavailable"}:
-            self._start_result_polling()
+    def _infer_processing_stage(self, processing_job_dir: Path) -> str:
+        """Infer the current WSL pipeline stage from intermediate files."""
+        if (processing_job_dir / "analysis" / "llm" / "text_request.json").exists():
+            return STAGE_LABELS["awaiting_llm"]
+        if (processing_job_dir / "analysis" / "transcript" / "transcript.json").exists():
+            return STAGE_LABELS["transcript_done"]
+        return STAGE_LABELS["processing"]
 
     def _show_result_workspace(self, *, shared_root: Path, selected_job_id: str | None) -> None:
         try:
@@ -1008,8 +1205,20 @@ class MainWindow(QMainWindow):
             dialog.raise_()
             dialog.activateWindow()
             dialog.exec()
+            if dialog.entry_to_open is not None:
+                self._load_entry_into_result_view(dialog.entry_to_open)
         except Exception as exc:  # pragma: no cover - GUI boundary
             QMessageBox.critical(self, "Result workspace failed", str(exc) or type(exc).__name__)
+
+    def _load_entry_into_result_view(self, entry: ResultWorkspaceEntry) -> None:
+        """Load a history entry directly into the inline result view."""
+        from windows_client.app.insight_brief import InsightBriefV2
+        brief = entry.details.get("insight_brief") if entry.details else None
+        if not isinstance(brief, InsightBriefV2):
+            brief = None
+        self._latest_result_entry = entry
+        self.result_inline.load_entry(entry, brief=brief)
+        self.stack.setCurrentWidget(self.result_inline)
 
     def _set_meta_grid_visible(self, visible: bool) -> None:
         for index in range(self.meta_grid.count()):

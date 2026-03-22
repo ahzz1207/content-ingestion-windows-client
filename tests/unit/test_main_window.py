@@ -12,7 +12,7 @@ if str(SRC_DIR) not in sys.path:
 from PySide6.QtWidgets import QApplication
 
 from windows_client.app.view_models import DoctorSnapshot, JobExportSnapshot, OperationViewState
-from windows_client.gui.main_window import MainWindow, _preview_html
+from windows_client.gui.main_window import MainWindow, _normalize_url, _preview_html
 
 
 class MainWindowTests(unittest.TestCase):
@@ -50,11 +50,14 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window._latest_result_entry.state, "processed")
         self.assertFalse(self.window._result_poll_timer.isActive())
-        self.assertEqual(self.window.result_summary.text(), "Structured summary from WSL.")
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
 
     def test_poll_times_out_with_stable_message(self) -> None:
-        with patch("windows_client.gui.main_window.load_job_result", return_value=None):
-            for _ in range(20):
+        # Simulate timeout by setting poll start time far in the past (> 720s)
+        self.window._result_poll_start_time = 0.0
+        import windows_client.gui.main_window as mw_module
+        with patch.object(mw_module, "AUTO_RESULT_POLL_TIMEOUT_SECONDS", 0):
+            with patch("windows_client.gui.main_window.load_job_result", return_value=None):
                 self.window._poll_current_job_result()
 
         self.assertIn("Check back later", self.window.result_summary.text())
@@ -151,20 +154,35 @@ class MainWindowTests(unittest.TestCase):
         for i in range(5):
             self.assertIn(f"KeyPoint{i}", rendered)
 
-    def test_open_current_job_result_refreshes_status_after_workspace_closes(self) -> None:
-        self.window._latest_result_entry = _Entry(job_id="job-123", state="processing", summary="Being analysed.")
-        with (
-            patch("windows_client.gui.main_window.ResultWorkspaceDialog") as dialog_cls,
-            patch(
-                "windows_client.gui.main_window.load_job_result",
-                side_effect=[_processed_entry("job-123")],
-            ),
-        ):
-            dialog_cls.return_value.exec.return_value = 0
-            self.window._open_current_job_result()
+    def test_processed_entry_without_brief_still_navigates_to_result_page(self) -> None:
+        """Degraded path: no insight_brief — result page is still shown with HTML browser."""
+        entry = _processed_entry("job-no-brief")
+        # entry.details has no "insight_brief" key
 
-        self.assertEqual(self.window.result_summary.text(), "Structured summary from WSL.")
+        with patch("windows_client.gui.main_window.load_job_result", return_value=entry):
+            self.window._refresh_current_job_result()
+
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
         self.assertEqual(self.window._latest_result_entry.state, "processed")
+
+    def test_failed_result_shows_error_message_and_retry_button(self) -> None:
+        """Direction 3: failed job surfaces error text and exposes retry button."""
+        failed_entry = _Entry(job_id="job-fail", state="failed", summary="pipeline error: whisper timed out")
+
+        with patch("windows_client.gui.main_window.load_job_result", return_value=failed_entry):
+            self.window._refresh_current_job_result()
+
+        self.assertIn("whisper timed out", self.window.result_summary.text())
+        self.assertFalse(self.window.retry_button.isHidden())
+
+    def test_retry_button_hidden_at_task_start(self) -> None:
+        """Direction 3: retry button must be hidden when a new task begins."""
+        from windows_client.gui.platform_router import resolve_platform_route
+        route = resolve_platform_route("https://mp.weixin.qq.com/s/test")
+        if route is None:
+            self.skipTest("no route for test URL")
+        self.window._set_task_state(route=route, url="https://mp.weixin.qq.com/s/test", stage="collecting")
+        self.assertTrue(self.window.retry_button.isHidden())
 
     def test_completed_job_with_brief_navigates_to_result_page(self) -> None:
         """Phase 7: when result has insight_brief, stack should show inline result view."""
@@ -191,6 +209,33 @@ class MainWindowTests(unittest.TestCase):
             self.window._refresh_current_job_result()
 
         self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+
+
+class NormalizeUrlTests(unittest.TestCase):
+    def test_wechat_strips_tracking_params(self) -> None:
+        url = "https://mp.weixin.qq.com/s?__biz=ABC&mid=123&sn=xyz&chksm=deadbeef&scene=27"
+        result = _normalize_url(url)
+        self.assertIn("__biz=ABC", result)
+        self.assertIn("mid=123", result)
+        self.assertIn("sn=xyz", result)
+        self.assertNotIn("chksm", result)
+        self.assertNotIn("scene", result)
+
+    def test_bilibili_strips_recommendation_params(self) -> None:
+        url = "https://www.bilibili.com/video/BV1demo/?spm_id_from=333.999&vd_source=abc123"
+        result = _normalize_url(url)
+        self.assertNotIn("spm_id_from", result)
+        self.assertNotIn("vd_source", result)
+
+    def test_bilibili_preserves_page_param(self) -> None:
+        url = "https://www.bilibili.com/video/BV1demo/?p=3&spm_id_from=foo"
+        result = _normalize_url(url)
+        self.assertIn("p=3", result)
+        self.assertNotIn("spm_id_from", result)
+
+    def test_other_domains_unchanged(self) -> None:
+        url = "https://example.com/article?foo=bar&utm_source=twitter"
+        self.assertEqual(_normalize_url(url), url)
 
 
 class _FakeWorkflow:

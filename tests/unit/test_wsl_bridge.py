@@ -47,7 +47,7 @@ class WslBridgeTests(unittest.TestCase):
 
         with patch(
             "windows_client.app.wsl_bridge.subprocess.run",
-            return_value=unittest.mock.Mock(returncode=0, stdout='"wsl.exe","4321","Console","1","12,000 K"\n', stderr=""),
+            return_value=unittest.mock.Mock(returncode=0, stdout=b'"wsl.exe","4321","Console","1","12,000 K"\n', stderr=""),
         ):
             status = self.bridge.watch_status()
 
