@@ -1,0 +1,167 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  color: #1f2933;
+  background:
+    radial-gradient(circle at top right, rgba(45, 116, 180, 0.16), transparent 36%),
+    linear-gradient(180deg, #f7fbff 0%, #eef4f8 100%);
+}
+
+body.popup {
+  min-width: 360px;
+}
+
+.panel,
+.options-shell {
+  padding: 16px;
+}
+
+.panel-header,
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: #537188;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 16px;
+}
+
+.card,
+.options-card {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(83, 113, 136, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 14px 28px rgba(20, 46, 69, 0.08);
+  padding: 16px;
+  margin-top: 16px;
+  backdrop-filter: blur(8px);
+}
+
+.manual-form,
+.settings-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #537188;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #cdd8e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #ffffff;
+}
+
+input:focus {
+  outline: 2px solid rgba(45, 116, 180, 0.25);
+  border-color: #2d74b4;
+}
+
+.primary-button,
+.secondary-button,
+.ghost-button {
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.primary-button,
+.secondary-button {
+  padding: 10px 14px;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #245e94, #2e7abc);
+  color: #ffffff;
+}
+
+.secondary-button {
+  background: #dcebf7;
+  color: #153450;
+}
+
+.ghost-button {
+  padding: 8px 12px;
+  background: transparent;
+  color: #245e94;
+}
+
+.primary-button:hover,
+.secondary-button:hover,
+.ghost-button:hover {
+  transform: translateY(-1px);
+  opacity: 0.92;
+}
+
+.jobs-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.job-row {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7fbff;
+  border: 1px solid #d9e6f2;
+}
+
+.job-url {
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.job-meta,
+.status-message,
+.empty-state {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #5b7083;
+}
+
+.status-message[data-tone="success"] {
+  color: #23613a;
+}
+
+.status-message[data-tone="error"] {
+  color: #9f2f2f;
+}
+
+.actions {
+  margin-top: 8px;
+}

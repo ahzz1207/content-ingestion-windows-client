@@ -19,6 +19,7 @@ from windows_client.job_exporter.exporter import JobExporter
 from windows_client.video_downloader import YtDlpVideoDownloader
 
 _GUI_DETACHED_ENV = "WINDOWS_CLIENT_GUI_DETACHED"
+_DEFAULT_WSL_WATCH_INTERVAL_SECONDS = 2.0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -64,6 +65,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     gui = subparsers.add_parser("gui")
     gui.add_argument("--debug-console", action="store_true")
+
+    serve = subparsers.add_parser("serve")
+    serve.add_argument("--shared-root", type=Path)
+    serve.add_argument("--host")
+    serve.add_argument("--port", type=int)
+    serve.add_argument("--api-token")
 
     wsl_doctor = subparsers.add_parser("wsl-doctor")
     wsl_doctor.add_argument("--shared-root", type=Path)
@@ -119,6 +126,14 @@ def build_wsl_bridge(shared_root: Path | None = None) -> WslBridge:
     return WslBridge(settings=settings)
 
 
+def _ensure_wsl_watch_running(shared_root: Path | None = None) -> dict[str, str]:
+    bridge = build_wsl_bridge(shared_root)
+    return bridge.ensure_watch_running(
+        shared_root=shared_root,
+        interval_seconds=_DEFAULT_WSL_WATCH_INTERVAL_SECONDS,
+    )
+
+
 def _print_export_result(result) -> None:
     print(f"job_id={result.job_id}")
     print(f"job_dir={result.job_dir}")
@@ -171,11 +186,39 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "gui":
+            _ensure_wsl_watch_running()
             if not args.debug_console and _launch_gui_detached():
                 return 0
             from windows_client.gui import launch_gui
 
             return launch_gui()
+
+        if args.command == "serve":
+            from windows_client.api.config import ApiConfig
+            from windows_client.api.server import run_server
+
+            config_kwargs = {}
+            if args.shared_root is not None:
+                config_kwargs["shared_inbox_root"] = args.shared_root
+            if args.host is not None:
+                config_kwargs["host"] = args.host
+            if args.port is not None:
+                config_kwargs["port"] = args.port
+            if args.api_token is not None:
+                config_kwargs["api_token"] = args.api_token
+
+            config = ApiConfig(**config_kwargs)
+            config.ensure_api_token()
+            watcher = _ensure_wsl_watch_running(config.effective_shared_inbox_root)
+            print(f"status=starting")
+            print(f"api_base_url=http://{config.host}:{config.port}/api/v1")
+            print(f"shared_root={config.effective_shared_inbox_root}")
+            print(f"api_token_path={config.api_token_path}")
+            print(f"wsl_watch_status={watcher['status']}")
+            print(f"wsl_watch_pid={watcher['pid']}")
+            print(f"wsl_watch_log_path={watcher['log_path']}")
+            run_server(config=config)
+            return 0
 
         if args.command in {
             "wsl-doctor",

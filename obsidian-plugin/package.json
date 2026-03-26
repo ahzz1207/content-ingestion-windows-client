@@ -1,0 +1,14 @@
+{
+  "name": "obsidian-content-ingestion",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs production"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.10",
+    "typescript": "^5.8.2"
+  }
+}

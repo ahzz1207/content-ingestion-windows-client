@@ -7,6 +7,7 @@ build/
 .claude/
 *.log
 *.tmp
+obsidian-plugin/node_modules/
 
 data/browser-profiles/
 data/shared_inbox/incoming/

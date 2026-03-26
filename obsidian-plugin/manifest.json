@@ -1,0 +1,9 @@
+{
+  "id": "content-ingestion",
+  "name": "Content Ingestion",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Submit URLs into the local Content Ingestion pipeline and inspect recent jobs.",
+  "author": "OpenAI Codex",
+  "isDesktopOnly": false
+}

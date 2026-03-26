@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Content Ingestion",
+  "version": "0.1.0",
+  "description": "Send the current page or a link into the local Content Ingestion pipeline.",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "contextMenus",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}

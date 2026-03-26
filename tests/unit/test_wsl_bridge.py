@@ -95,3 +95,39 @@ class WslBridgeTests(unittest.TestCase):
         self.assertTrue(any("ZENMUX_BASE_URL" in item for item in exports))
         self.assertTrue(any("CONTENT_INGESTION_ANALYSIS_MODEL" in item for item in exports))
         self.assertTrue(any("CONTENT_INGESTION_WHISPER_MODEL" in item for item in exports))
+
+    def test_ensure_watch_running_reuses_existing_watcher(self) -> None:
+        with patch.object(
+            self.bridge,
+            "watch_status",
+            return_value={
+                "running": "True",
+                "pid": "4321",
+                "shared_root": str(self.project_root / "data" / "shared_inbox"),
+                "interval_seconds": "2",
+                "log_path": str(self.project_root / "data" / "wsl-watch.log"),
+                "started_at": "2026-03-14T16:00:00+00:00",
+                "launcher": "wsl.exe",
+            },
+        ):
+            result = self.bridge.ensure_watch_running()
+
+        self.assertEqual(result["status"], "already_running")
+        self.assertEqual(result["pid"], "4321")
+
+    def test_ensure_watch_running_starts_when_not_running(self) -> None:
+        state = WslWatchState(
+            pid=5678,
+            shared_root=str(self.project_root / "data" / "shared_inbox"),
+            interval_seconds=2.0,
+            log_path=str(self.project_root / "data" / "wsl-watch.log"),
+            started_at="2026-03-14T16:00:00+00:00",
+        )
+        with patch.object(self.bridge, "watch_status", return_value=None):
+            with patch.object(self.bridge, "start_watch", return_value=state) as start_watch:
+                result = self.bridge.ensure_watch_running()
+
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["running"], "True")
+        self.assertEqual(result["pid"], "5678")
+        start_watch.assert_called_once()

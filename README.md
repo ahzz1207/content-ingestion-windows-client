@@ -11,6 +11,8 @@ The current goal is not to build the final GUI immediately. The active path is:
 
 The primary alignment document for this repository is:
 
+- `Content-Ingestion-架构分析.md`
+- `Content-Ingestion-线1-入口扩展规划.md`
 - `docs/windows-client-kickoff.md`
 - `docs/pre-gui-checkpoint-2026-03-14.md`
 - `docs/gui-phase1-design-2026-03-14.md`
@@ -60,10 +62,14 @@ Current implementation status:
 - the GUI now includes a first result-workspace entry for browsing recent WSL states from `incoming/`, `processing/`, `processed/`, and `failed/`
 - the result workspace now prefers structured WSL output when available, including summary, key points, analysis, verification, and warnings
 - the WSL bridge now forwards supported LLM environment variables into watcher and one-shot WSL commands
+- a local HTTP API now exists at `python main.py serve`, reusing the same Windows exporter and shared inbox contract
+- a Chrome extension MVP now exists in `chrome-extension/` as the first HTTP API consumer
+- an Obsidian plugin MVP now exists in `obsidian-plugin/` with correct settings persistence via whole-object `loadData()` / `saveData()`
 
 Quick commands:
 
 - `python main.py doctor`
+- `python main.py serve`
 - `python main.py gui`
 - `python main.py gui --debug-console`
 - `python main.py browser-login --start-url https://mp.weixin.qq.com/`
@@ -79,6 +85,12 @@ Quick commands:
 - `python main.py wsl-stop-watch`
 - `python main.py export-browser-job https://mp.weixin.qq.com/s/<id> --wait-for-selector '#js_content'`
 - `python main.py export-browser-job <url> --profile-dir <dir> --wait-until domcontentloaded --timeout-ms 5000 --settle-ms 0`
+
+New entry surfaces:
+
+- `chrome-extension/` for the first browser-based HTTP API validation path
+- `edge-extension/` for the Edge variant of the same local HTTP API flow
+- `obsidian-plugin/` for the first Obsidian command/status-view integration
 
 Shared inbox configuration:
 

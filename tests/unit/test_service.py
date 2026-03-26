@@ -373,6 +373,33 @@ class WindowsClientServiceTests(unittest.TestCase):
             profile_dir=self.project_root / "data" / "browser-profiles" / "bilibili",
         )
 
+    def test_export_url_job_skips_video_download_when_mode_is_none(self) -> None:
+        video_downloader = MagicMock()
+        url_collector = MagicMock()
+        url_collector.collect.return_value = CollectedPayload(
+            source_url="https://www.bilibili.com/video/BV1demo/",
+            content_type="html",
+            payload_text="<html><body>Video</body></html>",
+            platform="bilibili",
+            content_shape="video",
+        )
+        service = WindowsClientService(
+            settings=Settings(project_root=self.project_root),
+            mock_collector=MockCollector(),
+            url_collector=url_collector,
+            browser_collector=MagicMock(),
+            exporter=JobExporter(settings=Settings(project_root=self.project_root)),
+            video_downloader=video_downloader,
+        )
+
+        result = service.export_url_job(
+            url="https://www.bilibili.com/video/BV1demo/",
+            video_download_mode=None,
+        )
+
+        self.assertTrue(result.payload_path.exists())
+        video_downloader.download.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

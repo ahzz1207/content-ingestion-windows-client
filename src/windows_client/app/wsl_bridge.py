@@ -104,6 +104,30 @@ class WslBridge:
         self._write_watch_state(state)
         return state
 
+    def ensure_watch_running(
+        self,
+        *,
+        shared_root: Path | None = None,
+        interval_seconds: float = 2.0,
+    ) -> dict[str, str]:
+        current = self.watch_status()
+        if current is not None and current.get("running") == "True":
+            result = dict(current)
+            result["status"] = "already_running"
+            return result
+
+        state = self.start_watch(shared_root=shared_root, interval_seconds=interval_seconds)
+        return {
+            "status": "started",
+            "running": "True",
+            "pid": str(state.pid),
+            "shared_root": state.shared_root,
+            "interval_seconds": f"{state.interval_seconds:g}",
+            "log_path": state.log_path,
+            "started_at": state.started_at,
+            "launcher": "wsl.exe",
+        }
+
     def watch_status(self) -> dict[str, str] | None:
         state = self._read_watch_state()
         if state is None:

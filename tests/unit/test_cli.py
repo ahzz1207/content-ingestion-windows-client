@@ -137,6 +137,23 @@ class CliTests(unittest.TestCase):
         self.assertIn("status=started", stdout.getvalue())
         self.assertIn("pid=4321", stdout.getvalue())
 
+    def test_main_serve_command_invokes_api_server(self) -> None:
+        stdout = io.StringIO()
+
+        watcher = {"status": "started", "pid": "4321", "log_path": str(PROJECT_ROOT / "data" / "wsl-watch.log")}
+        with patch("windows_client.api.server.run_server") as run_server:
+            with patch("windows_client.app.cli._ensure_wsl_watch_running", return_value=watcher) as ensure_watch:
+                with patch.object(sys, "argv", ["main.py", "serve", "--host", "127.0.0.1", "--port", "19527"]):
+                    with redirect_stdout(stdout):
+                        exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("status=starting", stdout.getvalue())
+        self.assertIn("api_base_url=http://127.0.0.1:19527/api/v1", stdout.getvalue())
+        self.assertIn("wsl_watch_status=started", stdout.getvalue())
+        run_server.assert_called_once()
+        ensure_watch.assert_called_once()
+
     def test_main_full_chain_smoke_runs_export_and_bridge(self) -> None:
         stdout = io.StringIO()
         fake_service = unittest.mock.MagicMock()

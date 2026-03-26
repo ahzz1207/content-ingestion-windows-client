@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from windows_client.app.cli import build_service
+from windows_client.app.cli import _ensure_wsl_watch_running, build_service
 from windows_client.app.workflow import WindowsClientWorkflow
 
 
@@ -12,6 +12,7 @@ def launch_gui() -> int:
 
     from windows_client.gui.main_window import MainWindow
 
+    _ensure_wsl_watch_running()
     app = QApplication.instance() or QApplication([])
     window = MainWindow(workflow=WindowsClientWorkflow(build_service()))
     window.show()

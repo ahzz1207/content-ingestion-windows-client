@@ -95,7 +95,7 @@ class WindowsClientService:
         shared_root: Path | None = None,
         content_type: str | None = None,
         platform: str | None = None,
-        video_download_mode: str = "audio",
+        video_download_mode: str | None = "audio",
         on_progress: Callable[[str], None] | None = None,
     ) -> ExportResult:
         resolved_platform = platform or self.settings.default_platform
@@ -131,7 +131,7 @@ class WindowsClientService:
         url: str,
         shared_root: Path | None = None,
         platform: str | None = None,
-        video_download_mode: str = "audio",
+        video_download_mode: str | None = "audio",
         profile_dir: Path | None = None,
         browser_channel: str | None = None,
         headless: bool | None = None,
@@ -243,9 +243,11 @@ class WindowsClientService:
         url: str,
         on_progress: Callable[[str], None] | None,
         profile_dir: Path | None,
-        video_download_mode: str,
+        video_download_mode: str | None,
     ):
         if self.video_downloader is None:
+            return payload, None
+        if not video_download_mode or video_download_mode == "none":
             return payload, None
         resolved_platform = payload.platform if payload.platform != "generic" else detect_platform(url, payload.payload_text)
         if payload.content_shape != "video" and not self.video_downloader.supports(url=url, platform=resolved_platform):

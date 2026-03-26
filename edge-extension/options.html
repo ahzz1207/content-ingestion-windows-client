@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Content Ingestion Settings</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="options">
+    <main class="options-shell">
+      <section class="options-card">
+        <p class="eyebrow">Edge Extension</p>
+        <h1>Content Ingestion Settings</h1>
+        <form id="settings-form" class="settings-form">
+          <label for="api-base-url">API Base URL</label>
+          <input id="api-base-url" name="api-base-url" type="url" required>
+
+          <label for="api-token">API Token</label>
+          <input id="api-token" name="api-token" type="password" placeholder="Bearer token">
+
+          <div class="actions">
+            <button class="primary-button" type="submit">Save settings</button>
+          </div>
+        </form>
+        <p id="settings-status" class="status-message" role="status"></p>
+      </section>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>

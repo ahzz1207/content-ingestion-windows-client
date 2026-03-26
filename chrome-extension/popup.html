@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Content Ingestion</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="popup">
+    <main class="panel">
+      <header class="panel-header">
+        <div>
+          <p class="eyebrow">Local Pipeline</p>
+          <h1>Content Ingestion</h1>
+        </div>
+        <button id="open-options" class="ghost-button" type="button">Settings</button>
+      </header>
+
+      <section class="card">
+        <button id="submit-current-tab" class="primary-button" type="button">Send current tab</button>
+        <form id="manual-form" class="manual-form">
+          <label for="manual-url">Manual URL</label>
+          <input id="manual-url" name="manual-url" type="url" placeholder="https://example.com/article" required>
+          <button class="secondary-button" type="submit">Send URL</button>
+        </form>
+        <p id="status-message" class="status-message" role="status"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-title-row">
+          <h2>Recent jobs</h2>
+          <button id="refresh-jobs" class="ghost-button" type="button">Refresh</button>
+        </div>
+        <div id="jobs-list" class="jobs-list">
+          <p class="empty-state">No jobs yet.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
