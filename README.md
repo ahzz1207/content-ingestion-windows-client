@@ -9,37 +9,47 @@ The current goal is not to build the final GUI immediately. The active path is:
 3. write a valid inbox job into `shared_inbox/incoming/<job_id>/`
 4. let the existing WSL processor handle it successfully
 
-The primary alignment document for this repository is:
+The primary alignment documents for this repository are grouped below by purpose.
+
+Architecture and contracts:
 
 - `Content-Ingestion-架构分析.md`
-- `Content-Ingestion-线1-入口扩展规划.md`
-- `docs/windows-client-kickoff.md`
-- `docs/pre-gui-checkpoint-2026-03-14.md`
-- `docs/gui-phase1-design-2026-03-14.md`
-- `docs/gui-phase1-implementation-2026-03-14.md`
-- `docs/gui-convergence-checkpoint-2026-03-14.md`
-- `docs/gui-closeout-2026-03-14.md`
-- `docs/gui-result-workspace-direction-2026-03-14.md`
-- `docs/full-chain-check-2026-03-14.md`
-- `docs/phase1-usable-release-2026-03-14.md`
-- `docs/phase1-handoff-2026-03-15.md`
-- `docs/round2-handoff-2026-03-16.md`
-- `docs/code-review-followup-2026-03-16.md`
-- `docs/executable-plan-2026-03-16.md`
-- `docs/project-plan-review-2026-03-16.md`
-- `docs/project-plan-revised-2026-03-16.md`
-- `docs/visual-design-spec-revised-2026-03-16.md`
-- `docs/gui-direction-editorial-workspace-2026-03-17.md`
-- `docs/obsidian-integration-roadmap-2026-03-16.md`
-- `docs/gui-vision-2026-03-16.md`
-- `docs/cross-review-2026-03-14.md` for internal review history and cross-check notes; it is background material, not required reading
+- `docs/architecture-2026-03-22.md`
 - `docs/windows-wsl-handoff-contract.md`
 - `docs/windows-wsl-roundtrip.md`
+
+Product direction:
+
+- `Content-Ingestion-线1-入口扩展规划.md`
+- `docs/roadmap-2026.md`
+- `docs/project-plan-revised-2026-03-16.md`
+- `docs/obsidian-integration-roadmap-2026-03-16.md`
+
+Current implementation:
+
+- `docs/entry-expansion-checkpoint-2026-03-27.md`
+- `docs/changelog-2026-03-22.md`
+- `docs/round2-handoff-2026-03-16.md`
+- `docs/round2-foundation-2026-03-15.md`
+- `docs/result-product-refactor-2026-03-20.md`
+- `docs/processing-triage-2026-03-18.md`
+
+GUI and design:
+
+- `docs/gui-vision-2026-03-16.md`
+- `docs/gui-direction-editorial-workspace-2026-03-17.md`
+- `docs/visual-design-spec-revised-2026-03-16.md`
+
+Engineering:
+
+- `docs/code-review-followup-2026-03-16.md`
+- `docs/executable-plan-2026-03-16.md`
 - `docs/monorepo-github-plan-2026-03-15.md`
-- `docs/monorepo-migration-checklist-2026-03-15.md`
-- `docs/monorepo-root-readme-draft-2026-03-15.md`
-- `docs/monorepo-root-gitignore-draft-2026-03-15.txt`
-- `docs/monorepo-path-cutover-inventory-2026-03-15.md`
+
+Background and historical reference:
+
+- `docs/cross-review-2026-03-14.md`
+- `docs/session-memory-2026-03-20.md`
 
 Current implementation status:
 
@@ -63,8 +73,10 @@ Current implementation status:
 - the result workspace now prefers structured WSL output when available, including summary, key points, analysis, verification, and warnings
 - the WSL bridge now forwards supported LLM environment variables into watcher and one-shot WSL commands
 - a local HTTP API now exists at `python main.py serve`, reusing the same Windows exporter and shared inbox contract
+- the local HTTP API now exposes both lightweight job summaries and result-oriented views for completed or failed jobs
 - a Chrome extension MVP now exists in `chrome-extension/` as the first HTTP API consumer
-- an Obsidian plugin MVP now exists in `obsidian-plugin/` with correct settings persistence via whole-object `loadData()` / `saveData()`
+- the Chrome and Edge extension popups now render lightweight result cards for queued, processing, completed, and failed jobs
+- an Obsidian plugin now exists in `obsidian-plugin/` for URL submission, job review, and importing completed results into Source + Digest notes
 
 Quick commands:
 
@@ -92,6 +104,15 @@ New entry surfaces:
 - `edge-extension/` for the Edge variant of the same local HTTP API flow
 - `obsidian-plugin/` for the first Obsidian command/status-view integration
 
+Local API result surfaces:
+
+- `GET /api/v1/health`
+- `POST /api/v1/ingest`
+- `GET /api/v1/jobs`
+- `GET /api/v1/jobs?view=result_cards`
+- `GET /api/v1/jobs/{job_id}`
+- `GET /api/v1/jobs/{job_id}/result`
+
 Shared inbox configuration:
 
 - prefer `CONTENT_INGESTION_SHARED_INBOX_ROOT` when coordinating with the WSL repo
@@ -115,6 +136,18 @@ Current default behavior:
 - those GUI-facing modules do not have direct CLI commands; they are intended to be called by the future desktop shell
 - `python main.py gui` now detaches from the current terminal on Windows and launches the GUI without keeping the console in front; use `--debug-console` to keep the console attached
 - the GUI environment pills now include WSL watcher state so it is easier to spot when results will not arrive automatically
+- `GET /api/v1/jobs` defaults to `view=summary` for lightweight polling and badge refresh
+- `GET /api/v1/jobs?view=result_cards` returns browser-friendly cards with headline, one-line take, verification signal, warning count, and failure summary
+- `GET /api/v1/jobs/{job_id}/result` returns completed or failed result details, but returns `409` while a job is still queued or processing
+
+Recommended validation path for this round:
+
+1. Install the local API dependencies with `pip install -e ".[api]"`
+2. Start the local API server with `python main.py serve`
+3. Load the Chrome or Edge extension and confirm the popup shows lightweight result cards rather than only raw queue items
+4. Submit one ordinary page and one known rich result page, then wait for the jobs to move into `processed/` or `failed/`
+5. Open the Obsidian plugin status view and use `Import notes` on a completed job
+6. Confirm the vault now contains one note under `01 Sources/` and one note under `02 Digests/` for the same `job_id`
 
 Current milestone status:
 

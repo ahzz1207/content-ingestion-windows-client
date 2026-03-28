@@ -40,10 +40,18 @@ class ContentIngestionClient:
     def get_job(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/jobs/{job_id}")
 
-    def list_jobs(self, *, status: str | None = None, limit: int = 20) -> dict[str, Any]:
+    def delete_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/jobs/{job_id}")
+
+    def get_job_result(self, job_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/jobs/{job_id}/result")
+
+    def list_jobs(self, *, status: str | None = None, limit: int = 20, view: str | None = None) -> dict[str, Any]:
         query = {"limit": limit}
         if status:
             query["status"] = status
+        if view:
+            query["view"] = view
         return self._request("GET", f"/jobs?{urlencode(query)}")
 
     def _request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:

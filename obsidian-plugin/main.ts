@@ -9,90 +9,11 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 
+import { ApiClient } from "./api-client";
+import { importCompletedResult } from "./importer";
+import { DEFAULT_API_BASE_URL, DEFAULT_SETTINGS, IngestionSettings, JobResultCard } from "./types";
+
 const VIEW_TYPE_STATUS = "content-ingestion-status";
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:19527/api/v1";
-
-interface IngestionSettings {
-  apiBaseUrl: string;
-  apiToken: string;
-  defaultTags: string;
-  autoOpenStatusView: boolean;
-}
-
-interface JobRecord {
-  job_id: string;
-  status: string;
-  source_url?: string;
-  final_url?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-interface JobListResult {
-  items: JobRecord[];
-  total: number;
-}
-
-const DEFAULT_SETTINGS: IngestionSettings = {
-  apiBaseUrl: DEFAULT_API_BASE_URL,
-  apiToken: "",
-  defaultTags: "",
-  autoOpenStatusView: true,
-};
-
-class ApiClient {
-  constructor(private readonly getSettings: () => IngestionSettings) {}
-
-  async ingest(url: string): Promise<JobRecord> {
-    return this.request("/ingest", {
-      method: "POST",
-      body: JSON.stringify({
-        url,
-        tags: this.defaultTags(),
-      }),
-    });
-  }
-
-  async listJobs(): Promise<JobListResult> {
-    return this.request("/jobs?status=queued,processing,completed,failed&limit=12");
-  }
-
-  async health(): Promise<{ status: string }> {
-    return this.request("/health");
-  }
-
-  private defaultTags(): string[] {
-    const settings = this.getSettings();
-    return settings.defaultTags
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  private async request(path: string, init: RequestInit = {}): Promise<any> {
-    const settings = this.getSettings();
-    const headers = new Headers(init.headers ?? {});
-    headers.set("Accept", "application/json");
-    if (settings.apiToken) {
-      headers.set("Authorization", `Bearer ${settings.apiToken}`);
-    }
-    if (init.body) {
-      headers.set("Content-Type", "application/json");
-    }
-
-    const response = await fetch(`${settings.apiBaseUrl.replace(/\/+$/, "")}${path}`, {
-      ...init,
-      headers,
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `${response.status} ${response.statusText}`);
-    }
-
-    return response.json();
-  }
-}
 
 class IngestUrlModal extends Modal {
   private inputEl!: HTMLInputElement;
@@ -149,8 +70,6 @@ class IngestUrlModal extends Modal {
 }
 
 class StatusView extends ItemView {
-  private listEl!: HTMLDivElement;
-
   constructor(leaf: WorkspaceLeaf, private readonly plugin: ContentIngestionPlugin) {
     super(leaf);
   }
@@ -183,38 +102,144 @@ class StatusView extends ItemView {
       await this.render();
     };
 
-    this.listEl = contentEl.createDiv({ cls: "content-ingestion-view__list" });
+    const healthEl = contentEl.createDiv({ cls: "content-ingestion-view__health" });
+    const listEl = contentEl.createDiv({ cls: "content-ingestion-view__list" });
 
     try {
       const health = await this.plugin.apiClient.health();
-      contentEl.createDiv({
-        cls: "content-ingestion-view__health",
-        text: `API: ${health.status}`,
-      });
+      const watcherRunning = health.watcher?.running;
+      const watcherLabel = watcherRunning === true ? "running" : watcherRunning === false ? "stopped" : "unknown";
+      const inboxPath = health.shared_inbox_root || "unknown";
+      healthEl.setText(`API: ${health.status} | Inbox: ${inboxPath} | WSL watcher: ${watcherLabel}`);
+
       const jobs = await this.plugin.apiClient.listJobs();
       if (!jobs.items.length) {
-        this.listEl.createDiv({
+        listEl.createDiv({
           cls: "content-ingestion-view__empty",
           text: "No jobs yet.",
         });
         return;
       }
+
       for (const item of jobs.items) {
-        const rowEl = this.listEl.createDiv({ cls: "content-ingestion-job" });
-        rowEl.createDiv({
-          cls: "content-ingestion-job__url",
-          text: item.source_url ?? item.final_url ?? item.job_id,
-        });
-        rowEl.createDiv({
-          cls: "content-ingestion-job__meta",
-          text: `${item.status} · ${item.created_at ?? item.updated_at ?? item.job_id}`,
-        });
+        this.renderJobRow(listEl, item);
       }
     } catch (error) {
-      this.listEl.createDiv({
+      listEl.createDiv({
         cls: "content-ingestion-view__empty",
         text: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private renderJobRow(listEl: HTMLDivElement, item: JobResultCard): void {
+    const rowEl = listEl.createDiv({
+      cls: `content-ingestion-job content-ingestion-job--${item.status}`,
+    });
+
+    rowEl.createDiv({
+      cls: "content-ingestion-job__title",
+      text: item.result_card?.headline || item.title || item.source_url || item.canonical_url || item.job_id,
+    });
+
+    rowEl.createDiv({
+      cls: "content-ingestion-job__summary",
+      text: summarizeJob(item),
+    });
+
+    rowEl.createDiv({
+      cls: "content-ingestion-job__meta",
+      text: [statusLabel(item.status), formatTimestamp(item.updated_at), item.platform].filter(Boolean).join(" | "),
+    });
+
+    const chips = rowEl.createDiv({ cls: "content-ingestion-job__chips" });
+    if (item.status === "completed") {
+      chips.createSpan({
+        cls: `content-ingestion-chip content-ingestion-chip--${item.result_card?.verification_signal || "unavailable"}`,
+        text: verificationLabel(item.result_card?.verification_signal || "unavailable"),
+      });
+      if ((item.result_card?.warning_count || 0) > 0) {
+        chips.createSpan({
+          cls: "content-ingestion-chip content-ingestion-chip--warning",
+          text: `${item.result_card?.warning_count} warning${item.result_card?.warning_count === 1 ? "" : "s"}`,
+        });
+      }
+      if (item.result_card?.coverage_warning) {
+        chips.createSpan({
+          cls: "content-ingestion-chip content-ingestion-chip--caution",
+          text: "Coverage limited",
+        });
+      }
+    }
+
+    if (Array.isArray(item.result_card?.quick_takeaways) && item.result_card?.quick_takeaways.length) {
+      const takeawayList = rowEl.createEl("ul", { cls: "content-ingestion-job__takeaways" });
+      for (const takeaway of item.result_card.quick_takeaways) {
+        takeawayList.createEl("li", { text: takeaway });
+      }
+    }
+
+    const actions = rowEl.createDiv({ cls: "content-ingestion-job__actions" });
+    const sourceUrl = item.source_url || item.canonical_url;
+    if (sourceUrl) {
+      const sourceLink = actions.createEl("a", {
+        cls: "mod-button",
+        href: sourceUrl,
+        text: "Open source",
+      });
+      sourceLink.target = "_blank";
+      sourceLink.rel = "noreferrer";
+    }
+
+    const copyButton = actions.createEl("button", {
+      cls: "mod-button",
+      text: "Copy job id",
+    });
+    copyButton.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(item.job_id);
+        new Notice(`Copied ${item.job_id}`);
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error));
+      }
+    };
+
+    const archiveButton = actions.createEl("button", {
+      cls: "mod-button",
+      text: "Archive",
+    });
+    archiveButton.onclick = async () => {
+      const confirmed = window.confirm(
+        `Archive job ${item.job_id}? Pipeline files will be moved to the archived folder. Imported Obsidian notes will stay.`
+      );
+      if (!confirmed) {
+        return;
+      }
+      archiveButton.disabled = true;
+      archiveButton.setText("Archiving...");
+      try {
+        await this.plugin.archiveJob(item.job_id);
+      } finally {
+        archiveButton.disabled = false;
+        archiveButton.setText("Archive");
+      }
+    };
+
+    if (item.status === "completed") {
+      const importButton = actions.createEl("button", {
+        cls: "mod-button mod-cta",
+        text: "Import notes",
+      });
+      importButton.onclick = async () => {
+        importButton.disabled = true;
+        importButton.setText("Importing...");
+        try {
+          await this.plugin.importCompletedJob(item.job_id);
+        } finally {
+          importButton.disabled = false;
+          importButton.setText("Import notes");
+        }
+      };
     }
   }
 }
@@ -258,8 +283,28 @@ class ContentIngestionSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Source notes directory")
+      .setDesc("Folder for source notes imported from completed jobs")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.sourceNotesDir).onChange(async (value) => {
+          this.plugin.settings.sourceNotesDir = value.trim() || DEFAULT_SETTINGS.sourceNotesDir;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Digest notes directory")
+      .setDesc("Folder for digest notes imported from completed jobs")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.digestNotesDir).onChange(async (value) => {
+          this.plugin.settings.digestNotesDir = value.trim() || DEFAULT_SETTINGS.digestNotesDir;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
       .setName("Default tags")
-      .setDesc("Comma separated tags for future use")
+      .setDesc("Comma separated tags sent with manual URL submissions")
       .addText((text) =>
         text
           .setPlaceholder("research, article")
@@ -331,6 +376,28 @@ export default class ContentIngestionPlugin extends Plugin {
     }
   }
 
+  async importCompletedJob(jobId: string): Promise<void> {
+    try {
+      const result = await importCompletedResult(this.app, this.apiClient, this.settings, jobId);
+      new Notice(`Imported ${result.sourceFile.basename} and ${result.digestFile.basename}`);
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    } finally {
+      await this.refreshStatusViews();
+    }
+  }
+
+  async archiveJob(jobId: string): Promise<void> {
+    try {
+      await this.apiClient.archiveJob(jobId);
+      new Notice(`Archived ${jobId}. Imported notes were kept.`);
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    } finally {
+      await this.refreshStatusViews();
+    }
+  }
+
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data ?? {});
@@ -363,4 +430,44 @@ export default class ContentIngestionPlugin extends Plugin {
       }
     }
   }
+}
+
+function summarizeJob(item: JobResultCard): string {
+  if (item.status === "completed") {
+    return item.result_card?.one_sentence_take || item.result_card?.conclusion || item.source_url || item.job_id;
+  }
+  if (item.status === "failed") {
+    return item.failure_card?.summary || item.failure_card?.error || "Processing failed.";
+  }
+  return item.source_url || item.canonical_url || "Waiting for analysis output.";
+}
+
+function formatTimestamp(value?: string): string {
+  if (!value) {
+    return "Unknown time";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function statusLabel(status: string): string {
+  return {
+    queued: "Queued",
+    processing: "Processing",
+    completed: "Completed",
+    failed: "Failed",
+  }[status] || status;
+}
+
+function verificationLabel(value: string): string {
+  return {
+    supported: "Verified",
+    mixed: "Mixed",
+    warning: "Needs review",
+    unclear: "Unclear",
+    unavailable: "No verification",
+  }[value] || value;
 }

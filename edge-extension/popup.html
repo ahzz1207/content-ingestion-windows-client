@@ -17,7 +17,7 @@
       </header>
 
       <section class="card">
-        <button id="submit-current-tab" class="primary-button" type="button">Send current tab</button>
+        <button id="submit-current-tab" class="primary-button" type="button">Resubmit current tab</button>
         <form id="manual-form" class="manual-form">
           <label for="manual-url">Manual URL</label>
           <input id="manual-url" name="manual-url" type="url" placeholder="https://example.com/article" required>
@@ -31,6 +31,7 @@
           <h2>Recent jobs</h2>
           <button id="refresh-jobs" class="ghost-button" type="button">Refresh</button>
         </div>
+        <p id="inbox-status" class="inbox-status"></p>
         <div id="jobs-list" class="jobs-list">
           <p class="empty-state">No jobs yet.</p>
         </div>

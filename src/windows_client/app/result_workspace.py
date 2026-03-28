@@ -57,6 +57,10 @@ def load_job_result(shared_root: Path, job_id: str) -> ResultWorkspaceEntry | No
     if incoming_dir.exists():
         return _load_pending_result(incoming_dir)
 
+    archived_dir = shared_root / "archived" / job_id
+    if archived_dir.exists():
+        return _load_archived_result(archived_dir)
+
     return None
 
 
@@ -73,6 +77,7 @@ def list_recent_results(shared_root: Path, *, limit: int = 20) -> list[ResultWor
         + list((shared_root / "failed").glob("*"))
         + list((shared_root / "processing").glob("*"))
         + list((shared_root / "incoming").glob("*"))
+        + list((shared_root / "archived").glob("*"))
     )
     candidates = [path for path in candidates if path.is_dir()]
     candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
@@ -85,6 +90,8 @@ def list_recent_results(shared_root: Path, *, limit: int = 20) -> list[ResultWor
                 results.append(_load_failed_result(job_dir))
             elif job_dir.parent.name == "processing":
                 results.append(_load_processing_result(job_dir))
+            elif job_dir.parent.name == "archived":
+                results.append(_load_archived_result(job_dir))
             else:
                 results.append(_load_pending_result(job_dir))
         except Exception:
@@ -195,6 +202,41 @@ def _load_failed_result(job_dir: Path) -> ResultWorkspaceEntry:
             "status": _read_json_file(status_path) if status_path.exists() else {},
             "metadata": metadata,
         },
+    )
+
+
+def _load_archived_result(job_dir: Path) -> ResultWorkspaceEntry:
+    if (job_dir / "normalized.json").exists():
+        entry = _load_processed_result(job_dir)
+        entry.state = "archived"
+        return entry
+    if (job_dir / "error.json").exists():
+        entry = _load_failed_result(job_dir)
+        entry.state = "archived"
+        return entry
+    metadata_path = job_dir / "metadata.json"
+    metadata = _read_json_file(metadata_path) if metadata_path.exists() else {}
+    return ResultWorkspaceEntry(
+        job_id=str(metadata.get("job_id") or job_dir.name),
+        state="archived",
+        analysis_state=None,
+        updated_at=job_dir.stat().st_mtime,
+        job_dir=job_dir,
+        source_url=_coerce_str(metadata.get("source_url")),
+        title=_coerce_str(metadata.get("title") or metadata.get("title_hint")),
+        author=None,
+        published_at=None,
+        platform=_coerce_str(metadata.get("platform")),
+        canonical_url=_coerce_str(metadata.get("final_url")),
+        summary="Archived.",
+        preview_text=None,
+        metadata_path=metadata_path if metadata_path.exists() else None,
+        analysis_json_path=None,
+        normalized_json_path=None,
+        normalized_md_path=None,
+        status_path=None,
+        error_path=None,
+        details={"metadata": metadata},
     )
 
 

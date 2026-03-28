@@ -81,13 +81,18 @@ async function submitUrl(url) {
     method: "POST",
     body: {
       url,
-      video_download_mode: "none",
     },
   });
 }
 
 async function listRecentJobs() {
-  return apiRequest("/jobs?status=queued,processing,completed,failed&limit=10");
+  return apiRequest("/jobs?status=queued,processing,completed,failed&limit=10&view=result_cards");
+}
+
+async function archiveJob(jobId) {
+  return apiRequest(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
 }
 
 async function updateBadge() {
@@ -171,6 +176,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "list-jobs") {
       const jobs = await listRecentJobs();
       sendResponse({ ok: true, jobs });
+      return;
+    }
+    if (message.type === "archive-job") {
+      const archived = await archiveJob(String(message.jobId || ""));
+      await updateBadge();
+      sendResponse({ ok: true, archived });
       return;
     }
     if (message.type === "health") {

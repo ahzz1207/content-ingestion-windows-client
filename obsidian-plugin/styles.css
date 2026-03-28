@@ -40,14 +40,70 @@
   background: var(--background-secondary);
 }
 
-.content-ingestion-job__url {
+.content-ingestion-job--completed {
+  border-color: color-mix(in srgb, var(--color-green) 25%, var(--background-modifier-border));
+}
+
+.content-ingestion-job--failed {
+  border-color: color-mix(in srgb, var(--color-red) 25%, var(--background-modifier-border));
+}
+
+.content-ingestion-job__title {
   font-size: 13px;
+  font-weight: 700;
   line-height: 1.4;
   word-break: break-word;
+}
+
+.content-ingestion-job__summary {
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 .content-ingestion-job__meta {
   margin-top: 6px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.content-ingestion-job__chips,
+.content-ingestion-job__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.content-ingestion-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+}
+
+.content-ingestion-chip--supported {
+  color: var(--color-green);
+}
+
+.content-ingestion-chip--mixed {
+  color: var(--color-blue);
+}
+
+.content-ingestion-chip--warning,
+.content-ingestion-chip--caution,
+.content-ingestion-chip--unclear {
+  color: var(--color-orange);
+}
+
+.content-ingestion-job__takeaways {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.content-ingestion-job__takeaways li {
+  margin-top: 4px;
 }
