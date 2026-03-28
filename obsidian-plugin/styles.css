@@ -99,6 +99,10 @@
   color: var(--color-orange);
 }
 
+.content-ingestion-chip--imported {
+  color: var(--color-purple);
+}
+
 .content-ingestion-job__takeaways {
   margin: 10px 0 0;
   padding-left: 18px;

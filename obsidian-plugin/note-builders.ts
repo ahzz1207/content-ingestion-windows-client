@@ -10,6 +10,8 @@ export function buildSourceNote(
   detail: JobResultDetail,
   refs: {
     digestLink: string;
+    ingestionDate?: string;
+    tags?: string[];
   }
 ): string {
   const title = detail.title || detail.job_id;
@@ -26,6 +28,8 @@ export function buildSourceNote(
       published_at: detail.published_at || "",
       captured_at: getString(metadata.captured_at),
       content_shape: getString(metadata.content_shape),
+      ingestion_date: refs.ingestionDate || new Date().toISOString().slice(0, 10),
+      tags: refs.tags ?? [],
       status: detail.status,
     }),
     `# ${title}`,
@@ -60,6 +64,8 @@ export function buildDigestNote(
   const summary = getSummary(detail);
   const structuredResult = asRecord(detail.structured_result);
   const synthesis = asRecord(structuredResult.synthesis);
+  const keyPoints = getArray(structuredResult.key_points);
+  const verificationItems = getArray(structuredResult.verification_items);
   const lines: string[] = [
     frontmatter({
       type: "digest",
@@ -70,6 +76,9 @@ export function buildDigestNote(
       author: detail.author || "",
       published_at: detail.published_at || "",
       status: detail.status,
+      verification_status: deriveVerificationStatus(verificationItems),
+      key_point_count: String(keyPoints.length),
+      analysis_model: getString(asRecord(detail.source_metadata || {}).analysis_model),
     }),
     `# ${summary?.headline || detail.title || detail.job_id}`,
     "",
@@ -107,13 +116,42 @@ function buildDatePrefix(detail: JobResultDetail): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function frontmatter(values: Record<string, string>): string {
+function frontmatter(values: Record<string, string | string[]>): string {
   const lines = ["---"];
   for (const [key, value] of Object.entries(values)) {
-    lines.push(`${key}: ${quoteYaml(value)}`);
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        lines.push(`${key}: []`);
+      } else {
+        lines.push(`${key}:`);
+        for (const item of value) {
+          lines.push(`  - ${quoteYaml(item)}`);
+        }
+      }
+    } else {
+      lines.push(`${key}: ${quoteYaml(value)}`);
+    }
   }
   lines.push("---", "");
   return lines.join("\n");
+}
+
+function deriveVerificationStatus(items: unknown[]): string {
+  const rows = items.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null);
+  if (!rows.length) {
+    return "unavailable";
+  }
+  const statuses = rows.map((r) => getString(r.status)).filter(Boolean);
+  if (!statuses.length) {
+    return "unavailable";
+  }
+  if (statuses.every((s) => s === "supported")) {
+    return "supported";
+  }
+  if (statuses.some((s) => s === "warning")) {
+    return "warning";
+  }
+  return "mixed";
 }
 
 function quoteYaml(value: string): string {

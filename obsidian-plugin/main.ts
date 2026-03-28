@@ -7,6 +7,7 @@ import {
   PluginSettingTab,
   Setting,
   WorkspaceLeaf,
+  normalizePath,
 } from "obsidian";
 
 import { ApiClient } from "./api-client";
@@ -170,6 +171,12 @@ class StatusView extends ItemView {
           text: "Coverage limited",
         });
       }
+      if (this.isJobImported(item.job_id)) {
+        chips.createSpan({
+          cls: "content-ingestion-chip content-ingestion-chip--imported",
+          text: "已导入",
+        });
+      }
     }
 
     if (Array.isArray(item.result_card?.quick_takeaways) && item.result_card?.quick_takeaways.length) {
@@ -241,6 +248,23 @@ class StatusView extends ItemView {
         }
       };
     }
+  }
+
+  private isJobImported(jobId: string): boolean {
+    const dirs = [this.plugin.settings.sourceNotesDir, this.plugin.settings.digestNotesDir];
+    for (const dir of dirs) {
+      const normalizedDir = normalizePath(dir);
+      for (const file of this.app.vault.getMarkdownFiles()) {
+        if (!file.path.startsWith(`${normalizedDir}/`)) {
+          continue;
+        }
+        const frontmatterData = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (frontmatterData?.job_id === jobId) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }
 

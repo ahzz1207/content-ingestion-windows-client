@@ -28,7 +28,12 @@ export async function importCompletedResult(
   const digestLink = `[[${digestTarget.basename}]]`;
   const insightCardEmbed = await importInsightCard(app, settings.digestNotesDir, detail);
 
-  const sourceContent = buildSourceNote(detail, { digestLink });
+  const ingestionDate = new Date().toISOString().slice(0, 10);
+  const tags = settings.defaultTags
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const sourceContent = buildSourceNote(detail, { digestLink, ingestionDate, tags });
   const digestContent = buildDigestNote(detail, { sourceLink, insightCardEmbed });
 
   const sourceFile = await upsertFile(app, sourceTarget.path, sourceContent);
