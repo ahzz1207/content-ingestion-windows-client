@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import threading
@@ -43,6 +44,9 @@ from windows_client.gui.result_renderer import (  # re-exported for test compati
 )
 from windows_client.gui.result_workspace_panel import ResultListItemWidget, ResultWorkspaceDialog
 from windows_client.gui.workers import WorkflowTaskThread
+
+
+logger = logging.getLogger(__name__)
 
 
 STAGE_LABELS = {
@@ -1149,7 +1153,19 @@ class MainWindow(QMainWindow):
         shared_root = self.workflow.service.settings.effective_shared_inbox_root
         try:
             result_entry = load_job_result(shared_root, self._current_state.job.job_id)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "failed to load current job result for %s: %s",
+                self._current_state.job.job_id,
+                exc,
+            )
+            self.result_summary.setText(
+                "Result is being prepared, but the GUI could not load it yet. Retrying automatically..."
+                if from_auto_poll
+                else "The analysis result is not ready for display yet. The GUI will retry automatically."
+            )
+            self.result_summary.show()
+            self._latest_result_entry = None
             return "unavailable"
         if result_entry is None:
             self.result_summary.setText(

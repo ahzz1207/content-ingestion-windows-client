@@ -210,6 +210,17 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
 
+    def test_result_load_exception_shows_retry_message(self) -> None:
+        with patch(
+            "windows_client.gui.main_window.load_job_result",
+            side_effect=RuntimeError("broken result payload"),
+        ):
+            state = self.window._refresh_current_job_result(from_auto_poll=True)
+
+        self.assertEqual(state, "unavailable")
+        self.assertIn("Retrying automatically", self.window.result_summary.text())
+        self.assertIsNone(self.window._latest_result_entry)
+
 
 class NormalizeUrlTests(unittest.TestCase):
     def test_wechat_strips_tracking_params(self) -> None:
