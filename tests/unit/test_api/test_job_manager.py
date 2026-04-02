@@ -26,6 +26,7 @@ class _FakeService:
         content_type: str | None = None,
         platform: str | None = None,
         video_download_mode: str | None = None,
+        requested_mode: str | None = None,
     ) -> ExportResult:
         self.calls.append(
             {
@@ -34,6 +35,7 @@ class _FakeService:
                 "content_type": content_type,
                 "platform": platform,
                 "video_download_mode": video_download_mode,
+                "requested_mode": requested_mode,
             }
         )
         job_dir = (shared_root or self.shared_root) / "incoming" / "job123"
@@ -48,6 +50,7 @@ class _FakeService:
                     "source_url": url,
                     "platform": platform or "generic",
                     "content_type": content_type or "html",
+                    "requested_mode": requested_mode or "auto",
                     "collected_at": "2026-03-26T12:00:00+08:00",
                 }
             ),
@@ -79,6 +82,7 @@ class JobManagerTests(unittest.TestCase):
             url="https://example.com/article",
             platform="generic",
             video_download_mode="audio",
+            requested_mode="guide",
         )
 
         self.assertEqual(result.job_id, "job123")
@@ -88,11 +92,19 @@ class JobManagerTests(unittest.TestCase):
         self.assertTrue(result.ready_path.exists())
         self.assertEqual(self.service.calls[0]["shared_root"], self.shared_root)
         self.assertEqual(self.service.calls[0]["url"], "https://example.com/article")
+        self.assertEqual(self.service.calls[0]["requested_mode"], "guide")
+        self.assertEqual(result.requested_mode, "guide")
 
     def test_submit_url_defaults_video_download_mode_to_audio(self) -> None:
         self.manager.submit_url(url="https://example.com/video")
 
         self.assertEqual(self.service.calls[0]["video_download_mode"], "audio")
+
+    def test_submit_url_defaults_requested_mode_to_auto(self) -> None:
+        result = self.manager.submit_url(url="https://example.com/article")
+
+        self.assertEqual(self.service.calls[0]["requested_mode"], "auto")
+        self.assertEqual(result.requested_mode, "auto")
 
     def test_list_jobs_filters_multiple_statuses(self) -> None:
         self._write_job("incoming", "job-queued", source_url="https://example.com/queued")

@@ -114,6 +114,89 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
         kp_viewpoints = [v for v in brief.viewpoints if v.kind == "key_point"]
         self.assertTrue(any(len(v.evidence_refs) > 0 for v in kp_viewpoints))
 
+    def test_adapt_uses_editorial_argument_when_present(self) -> None:
+        result = {
+            "content_kind": "analysis",
+            "author_stance": "critical",
+            "editorial": {
+                "resolved_mode": "argument",
+                "base": {
+                    "core_summary": {"value": "Core summary from editorial."},
+                    "bottom_line": {"value": "Bottom line from editorial."},
+                    "save_worthy_points": [{"value": "Point A"}, {"value": "Point B"}],
+                },
+                "mode_payload": {
+                    "evidence_backed_points": [
+                        {"title": "Evidence-backed point", "details": "Why it matters", "evidence_segment_ids": ["ev-1"]}
+                    ],
+                    "interpretive_points": [
+                        {"statement": "Interpretive point", "evidence_segment_ids": ["ev-2"]}
+                    ],
+                    "uncertainties": [{"value": "Uncertainty one"}],
+                },
+            },
+        }
+
+        index = {
+            "ev-1": EvidenceSnippet("ev-1", "Evidence one", 0, 1000, "transcript"),
+            "ev-2": EvidenceSnippet("ev-2", "Evidence two", 1000, 2000, "transcript"),
+        }
+
+        brief = adapt_from_structured_result(result, index, None)
+
+        self.assertIsNotNone(brief)
+        self.assertEqual(brief.hero.title, "Core summary from editorial.")
+        self.assertEqual(brief.synthesis_conclusion, "Bottom line from editorial.")
+        self.assertEqual(brief.quick_takeaways, ["Point A", "Point B"])
+        self.assertIn("Uncertainty one", brief.gaps)
+        self.assertTrue(any(v.statement == "Evidence-backed point" for v in brief.viewpoints))
+        self.assertTrue(any(v.statement == "Evidence-backed point" and len(v.evidence_refs) == 1 for v in brief.viewpoints))
+        self.assertTrue(any(v.statement == "Interpretive point" and len(v.evidence_refs) == 1 for v in brief.viewpoints))
+
+    def test_adapt_uses_editorial_guide_when_present(self) -> None:
+        result = {
+            "editorial": {
+                "resolved_mode": "guide",
+                "base": {
+                    "core_summary": {"value": "Guide summary."},
+                    "bottom_line": {"value": "Guide bottom line."},
+                    "save_worthy_points": [],
+                },
+                "mode_payload": {
+                    "recommended_steps": [{"value": "Step one"}, {"value": "Step two"}],
+                    "tips": [{"value": "Tip one"}],
+                },
+            },
+        }
+
+        brief = adapt_from_structured_result(result, {}, None)
+
+        self.assertIsNotNone(brief)
+        self.assertTrue(any(v.statement == "Step one" for v in brief.viewpoints))
+        self.assertTrue(any(v.statement == "Tip one" for v in brief.viewpoints))
+
+    def test_adapt_uses_editorial_review_when_present(self) -> None:
+        result = {
+            "editorial": {
+                "resolved_mode": "review",
+                "base": {
+                    "core_summary": {"value": "Review summary."},
+                    "bottom_line": {"value": "Review bottom line."},
+                    "save_worthy_points": [{"value": "Keep this"}],
+                },
+                "mode_payload": {
+                    "highlights": [{"value": "Highlight one"}],
+                    "reservation_points": [{"value": "Reservation one"}],
+                },
+            },
+        }
+
+        brief = adapt_from_structured_result(result, {}, None)
+
+        self.assertIsNotNone(brief)
+        self.assertTrue(any(v.statement == "Highlight one" for v in brief.viewpoints))
+        self.assertIn("Reservation one", brief.gaps)
+
 
 if __name__ == "__main__":
     unittest.main()

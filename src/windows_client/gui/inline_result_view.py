@@ -25,6 +25,12 @@ from windows_client.app.insight_brief import InsightBriefV2
 from windows_client.app.result_workspace import ResultWorkspaceEntry
 from windows_client.gui.result_renderer import PREVIEW_STYLESHEET, _markdown_filename, _preview_html, entry_to_markdown
 
+MODE_LABELS = {
+    "argument": "深度分析",
+    "guide": "实用提炼",
+    "review": "推荐导览",
+}
+
 
 class InlineResultView(QWidget):
     """Full-window widget that renders an InsightBriefV2 as the main content."""
@@ -92,10 +98,13 @@ class InlineResultView(QWidget):
         tags_row_layout = QHBoxLayout(self._hero_tags_row)
         tags_row_layout.setContentsMargins(0, 0, 0, 0)
         tags_row_layout.setSpacing(8)
+        self._mode_chip = QLabel("")
+        self._mode_chip.setObjectName("TagChip")
         self._content_kind_chip = QLabel("")
         self._content_kind_chip.setObjectName("TagChip")
         self._author_stance_chip = QLabel("")
         self._author_stance_chip.setObjectName("TagChipMuted")
+        tags_row_layout.addWidget(self._mode_chip)
         tags_row_layout.addWidget(self._content_kind_chip)
         tags_row_layout.addWidget(self._author_stance_chip)
         tags_row_layout.addStretch(1)
@@ -271,9 +280,16 @@ class InlineResultView(QWidget):
     def history_button(self) -> QPushButton:
         return self._history_btn
 
-    def load_entry(self, entry: ResultWorkspaceEntry, *, brief: InsightBriefV2 | None) -> None:
+    def load_entry(
+        self,
+        entry: ResultWorkspaceEntry,
+        *,
+        brief: InsightBriefV2 | None,
+        resolved_mode: str | None = None,
+    ) -> None:
         """Populate the view from a ResultWorkspaceEntry with an optional InsightBriefV2."""
         self._entry = entry
+        mode_label = MODE_LABELS.get((resolved_mode or "").strip().lower(), "")
 
         # Hero fields common to both paths
         source = entry.source_url or entry.canonical_url
@@ -296,11 +312,13 @@ class InlineResultView(QWidget):
             # Content-kind / author-stance chips
             kind = str(getattr(brief.hero, "content_kind", None) or "").strip()
             stance = str(getattr(brief.hero, "author_stance", None) or "").strip()
+            self._mode_chip.setText(mode_label)
+            self._mode_chip.setVisible(bool(mode_label))
             self._content_kind_chip.setText(kind)
             self._content_kind_chip.setVisible(bool(kind))
             self._author_stance_chip.setText(stance)
             self._author_stance_chip.setVisible(bool(stance))
-            self._hero_tags_row.setVisible(bool(kind or stance))
+            self._hero_tags_row.setVisible(bool(mode_label or kind or stance))
 
             key_point_viewpoints = [v for v in brief.viewpoints if v.kind == "key_point"]
             self._clear_layout(self._takeaways_list_layout)
@@ -376,7 +394,11 @@ class InlineResultView(QWidget):
             self._hero_title.setText(entry.title or "Analysis Complete")
             self._hero_take.setText(getattr(entry, "summary", "") or "")
             self._hero_byline.setVisible(False)
-            self._hero_tags_row.hide()
+            self._mode_chip.setText(mode_label)
+            self._mode_chip.setVisible(bool(mode_label))
+            self._content_kind_chip.setVisible(False)
+            self._author_stance_chip.setVisible(False)
+            self._hero_tags_row.setVisible(bool(mode_label))
             self._takeaways_frame.hide()
             self._verification_frame.hide()
             self._bottom_line_frame.hide()
@@ -422,7 +444,7 @@ class InlineResultView(QWidget):
             self._card_frame.hide()
 
         if brief is None:
-            self._browser.setHtml(_preview_html(entry))
+            self._browser.setHtml(_preview_html(entry, resolved_mode=resolved_mode))
             self._browser.show()
         else:
             self._browser.setHtml("")

@@ -95,6 +95,7 @@ class WindowsClientService:
         shared_root: Path | None = None,
         content_type: str | None = None,
         platform: str | None = None,
+        requested_mode: str = "auto",
         video_download_mode: str | None = "audio",
         on_progress: Callable[[str], None] | None = None,
     ) -> ExportResult:
@@ -116,6 +117,7 @@ class WindowsClientService:
             shared_root=resolved_shared_root,
             content_type=payload.content_type,
             platform=resolved_platform,
+            requested_mode=requested_mode,
             video_download_mode=video_download_mode if payload.content_shape == "video" else None,
             collection_mode="http",
         )
@@ -131,6 +133,7 @@ class WindowsClientService:
         url: str,
         shared_root: Path | None = None,
         platform: str | None = None,
+        requested_mode: str = "auto",
         video_download_mode: str | None = "audio",
         profile_dir: Path | None = None,
         browser_channel: str | None = None,
@@ -177,6 +180,7 @@ class WindowsClientService:
             shared_root=resolved_shared_root,
             content_type=payload.content_type,
             platform=resolved_platform,
+            requested_mode=requested_mode,
             video_download_mode=video_download_mode if payload.content_shape == "video" else None,
             collection_mode="browser",
             browser_channel=browser_channel,

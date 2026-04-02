@@ -400,6 +400,28 @@ class WindowsClientServiceTests(unittest.TestCase):
         self.assertTrue(result.payload_path.exists())
         video_downloader.download.assert_not_called()
 
+    def test_export_url_job_persists_requested_mode_in_metadata(self) -> None:
+        url_collector = MagicMock()
+        url_collector.collect.return_value = CollectedPayload(
+            source_url="https://example.com/guide",
+            content_type="html",
+            payload_text="<html><body>Guide</body></html>",
+            platform="generic",
+            content_shape="article",
+        )
+        service = WindowsClientService(
+            settings=Settings(project_root=self.project_root),
+            mock_collector=MockCollector(),
+            url_collector=url_collector,
+            browser_collector=MagicMock(),
+            exporter=JobExporter(settings=Settings(project_root=self.project_root)),
+        )
+
+        result = service.export_url_job(url="https://example.com/guide", requested_mode="guide")
+
+        metadata_text = result.metadata_path.read_text(encoding="utf-8")
+        self.assertIn('"requested_mode": "guide"', metadata_text)
+
 
 if __name__ == "__main__":
     unittest.main()

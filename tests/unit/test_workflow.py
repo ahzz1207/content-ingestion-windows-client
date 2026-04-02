@@ -80,6 +80,14 @@ class WindowsClientWorkflowTests(unittest.TestCase):
         self.service.export_url_job.assert_called_once()
         self.assertEqual(self.service.export_url_job.call_args.kwargs["video_download_mode"], "video")
 
+    def test_export_url_job_defaults_requested_mode_to_auto(self) -> None:
+        self.service.export_url_job = MagicMock(return_value=self.service.export_mock_job(url="https://example.com/article"))
+
+        state = self.workflow.export_url_job(url="https://example.com/article")
+
+        self.assertEqual(state.status, "success")
+        self.assertEqual(self.service.export_url_job.call_args.kwargs["requested_mode"], "auto")
+
     def test_browser_login_returns_profile_snapshot(self) -> None:
         profile_dir = self.project_root / "data" / "browser-profiles" / "wechat"
         self.service.browser_collector.open_profile_session.return_value = profile_dir

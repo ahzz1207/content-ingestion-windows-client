@@ -9,6 +9,7 @@ class ExportRequest:
     shared_root: Path | None = None
     content_type: str = "html"
     platform: str = "generic"
+    requested_mode: str = "auto"
     video_download_mode: str | None = None
     collection_mode: str | None = None
     browser_channel: str | None = None
@@ -27,6 +28,7 @@ class JobMetadata:
     collector: str
     collected_at: datetime
     content_type: str
+    requested_mode: str = "auto"
     video_download_mode: str | None = None
     collection_mode: str | None = None
     browser_channel: str | None = None

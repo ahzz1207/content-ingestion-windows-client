@@ -114,7 +114,10 @@ def _structured_result_payload(entry: ResultWorkspaceEntry) -> dict[str, object]
     result = asset.get("result")
     if not isinstance(result, dict):
         return None
-    if not any(result.get(key) for key in ("summary", "key_points", "analysis_items", "verification_items", "synthesis")):
+    if not any(
+        result.get(key)
+        for key in ("summary", "key_points", "analysis_items", "verification_items", "synthesis", "editorial")
+    ):
         return None
     return result
 
@@ -126,16 +129,38 @@ def _llm_processing_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | 
     normalized = entry.details.get("normalized")
     if not isinstance(normalized, dict):
         return None
-    asset = normalized.get("asset")
-    if not isinstance(asset, dict):
-        return None
-    metadata = asset.get("metadata")
+    metadata = normalized.get("metadata")
+    if not isinstance(metadata, dict):
+        asset = normalized.get("asset")
+        if not isinstance(asset, dict):
+            return None
+        metadata = asset.get("metadata")
     if not isinstance(metadata, dict):
         return None
     llm_processing = metadata.get("llm_processing")
     if not isinstance(llm_processing, dict):
         return None
     return llm_processing
+
+
+def _resolved_mode(entry: ResultWorkspaceEntry) -> str | None:
+    llm_processing = _llm_processing_payload(entry)
+    if not isinstance(llm_processing, dict):
+        return None
+    value = str(llm_processing.get("resolved_mode") or "").strip().lower()
+    return value or None
+
+
+def _mode_pill_html(entry: ResultWorkspaceEntry, resolved_mode: str | None = None) -> str:
+    labels = {
+        "argument": "深度分析",
+        "guide": "实用提炼",
+        "review": "推荐导览",
+    }
+    resolved_mode = resolved_mode or _resolved_mode(entry)
+    if resolved_mode not in labels:
+        return ""
+    return f"<div class='status-chip status-supported'>{html.escape(labels[resolved_mode])}</div>"
 
 
 def _analysis_skip_reason(entry: ResultWorkspaceEntry) -> str | None:
@@ -287,6 +312,7 @@ def _structured_preview_html(
     entry: ResultWorkspaceEntry,
     *,
     coverage_html: str = "",
+    resolved_mode: str | None = None,
 ) -> str | None:
     result = _structured_result_payload(entry)
     if result is None:
@@ -297,6 +323,10 @@ def _structured_preview_html(
     # Prepend coverage warning if provided
     if coverage_html:
         sections.append(coverage_html)
+
+    mode_pill = _mode_pill_html(entry, resolved_mode)
+    if mode_pill:
+        sections.append(mode_pill)
 
     summary = result.get("summary")
     if isinstance(summary, dict):
@@ -439,10 +469,10 @@ def _coverage_warning_html(entry: ResultWorkspaceEntry) -> str:
     )
 
 
-def _preview_html(entry: ResultWorkspaceEntry) -> str:
+def _preview_html(entry: ResultWorkspaceEntry, *, resolved_mode: str | None = None) -> str:
     if entry.state == "processed":
         cov_html = _coverage_warning_html(entry)
-        structured_html = _structured_preview_html(entry, coverage_html=cov_html)
+        structured_html = _structured_preview_html(entry, coverage_html=cov_html, resolved_mode=resolved_mode)
         if structured_html is not None:
             return structured_html
         preview_text = _preview_body(entry)

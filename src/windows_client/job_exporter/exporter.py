@@ -36,6 +36,7 @@ class JobExporter:
             collector="windows-client",
             collected_at=datetime.now().astimezone(),
             content_type=payload.content_type,
+            requested_mode=request.requested_mode,
             video_download_mode=request.video_download_mode,
             collection_mode=request.collection_mode,
             browser_channel=request.browser_channel,
@@ -196,6 +197,7 @@ class JobExporter:
             data["final_url"] = metadata.final_url
         if metadata.collection_mode:
             data["collection_mode"] = metadata.collection_mode
+        data["requested_mode"] = metadata.requested_mode
         if metadata.video_download_mode:
             data["video_download_mode"] = metadata.video_download_mode
         if metadata.browser_channel:

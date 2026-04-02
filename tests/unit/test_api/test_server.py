@@ -129,14 +129,27 @@ class ApiServerTests(unittest.TestCase):
     def test_ingest_returns_queued_job(self) -> None:
         response = self.client.post(
             "/api/v1/ingest",
-            json={"url": "https://example.com/article"},
+            json={"url": "https://example.com/article", "requested_mode": "review"},
             headers={"Authorization": "Bearer demo-token"},
         )
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["job_id"], "job123")
         self.assertEqual(self.manager.last_submit_url, "https://example.com/article")
+        self.assertEqual(self.manager.last_requested_mode, "review")
+        self.assertEqual(response.json()["requested_mode"], "review")
         self.assertIsNone(self.manager.last_video_download_mode)
+
+    def test_ingest_defaults_requested_mode_to_auto(self) -> None:
+        response = self.client.post(
+            "/api/v1/ingest",
+            json={"url": "https://example.com/article"},
+            headers={"Authorization": "Bearer demo-token"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(self.manager.last_requested_mode, "auto")
+        self.assertEqual(response.json()["requested_mode"], "auto")
 
 
 class _FakeManager:
@@ -144,6 +157,7 @@ class _FakeManager:
         self.last_statuses: list[str] | None = None
         self.last_submit_url: str | None = None
         self.last_video_download_mode: str | None = None
+        self.last_requested_mode: str | None = None
         self.last_list_view = "summary"
 
     def submit_url(
@@ -153,15 +167,18 @@ class _FakeManager:
         content_type: str | None = None,
         platform: str | None = None,
         video_download_mode: str | None = None,
+        requested_mode: str | None = None,
     ) -> IngestedJob:
         self.last_submit_url = url
         self.last_video_download_mode = video_download_mode
+        self.last_requested_mode = requested_mode
         return IngestedJob(
             job_id="job123",
             status="queued",
             source_url=url,
             content_type=content_type or "html",
             platform=platform or "generic",
+            requested_mode=requested_mode or "auto",
             created_at="2026-03-26T12:00:00+08:00",
         )
 

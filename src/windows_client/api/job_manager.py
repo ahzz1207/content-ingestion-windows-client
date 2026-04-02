@@ -50,6 +50,7 @@ class JobManager:
         content_type: str | None = None,
         platform: str | None = None,
         video_download_mode: str | None = None,
+        requested_mode: str = "auto",
     ) -> IngestedJob:
         resolved_video_download_mode = video_download_mode if video_download_mode is not None else "audio"
         result = self.service.export_url_job(
@@ -57,6 +58,7 @@ class JobManager:
             shared_root=self.shared_inbox_root,
             content_type=content_type,
             platform=platform,
+            requested_mode=requested_mode,
             video_download_mode=resolved_video_download_mode,
         )
         metadata = self._read_json(result.metadata_path)
@@ -66,6 +68,7 @@ class JobManager:
             source_url=str(metadata.get("source_url") or url),
             content_type=str(metadata.get("content_type") or content_type or "html"),
             platform=str(metadata.get("platform") or platform or "generic"),
+            requested_mode=self._coerce_text(metadata.get("requested_mode")) or "auto",
             created_at=self._coerce_text(metadata.get("collected_at")),
             job_dir=result.job_dir,
             payload_path=result.payload_path,

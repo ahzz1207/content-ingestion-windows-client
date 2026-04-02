@@ -96,6 +96,14 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window._selected_video_download_mode(route), "video")
 
+    def test_analysis_template_defaults_to_auto(self) -> None:
+        self.assertEqual(self.window.analysis_mode_combo.currentData(), "auto")
+
+    def test_selected_requested_mode_maps_to_backend_value(self) -> None:
+        self.window.analysis_mode_combo.setCurrentIndex(2)
+
+        self.assertEqual(self.window._selected_requested_mode(), "guide")
+
     def test_preview_html_prefers_structured_result_sections(self) -> None:
         entry = _processed_entry("job-structured")
         entry.details = {
@@ -220,6 +228,31 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(state, "unavailable")
         self.assertIn("Retrying automatically", self.window.result_summary.text())
         self.assertIsNone(self.window._latest_result_entry)
+
+    def test_load_entry_into_result_view_passes_resolved_mode(self) -> None:
+        entry = _processed_entry("job-mode")
+        entry.details = {
+            "normalized": {
+                "metadata": {
+                    "llm_processing": {
+                        "resolved_mode": "guide",
+                    }
+                }
+            }
+        }
+
+        with patch.object(self.window.result_inline, "load_entry") as load_entry:
+            self.window._load_entry_into_result_view(entry)
+
+        self.assertTrue(load_entry.called)
+        self.assertEqual(load_entry.call_args.kwargs["resolved_mode"], "guide")
+
+    def test_reset_to_ready_state_resets_requested_mode_to_auto(self) -> None:
+        self.window.analysis_mode_combo.setCurrentIndex(3)
+
+        self.window._reset_to_ready_state()
+
+        self.assertEqual(self.window.analysis_mode_combo.currentData(), "auto")
 
 
 class NormalizeUrlTests(unittest.TestCase):

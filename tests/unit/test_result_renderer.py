@@ -111,6 +111,36 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
             self.assertIn(f"Step {i}", html)
             self.assertIn(f"Q{i}", html)
 
+    def test_mode_pill_renders_when_resolved_mode_present(self) -> None:
+        entry = _structured_entry()
+        entry.details["normalized"]["metadata"] = {"llm_processing": {}}
+
+        html = _structured_preview_html(entry, resolved_mode="guide")
+
+        self.assertIsNotNone(html)
+        self.assertIn("实用提炼", html)
+
+    def test_mode_pill_renders_for_editorial_only_result_in_fallback(self) -> None:
+        entry = _make_entry()
+        entry.details = {
+            "normalized": {
+                "asset": {
+                    "result": {
+                        "editorial": {
+                            "resolved_mode": "review",
+                            "base": {"core_summary": {"value": "Review summary."}},
+                        }
+                    }
+                },
+                "metadata": {"llm_processing": {"resolved_mode": "review"}},
+            }
+        }
+
+        html = _structured_preview_html(entry, resolved_mode="review")
+
+        self.assertIsNotNone(html)
+        self.assertIn("推荐导览", html)
+
 
 class TestResolvedEvidenceHtmlUsesAllRefs(unittest.TestCase):
     def test_all_refs_rendered(self) -> None:

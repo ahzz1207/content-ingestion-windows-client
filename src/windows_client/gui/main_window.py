@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl, Signal as _Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -71,6 +72,13 @@ AUTO_RESULT_POLL_SLOW_INTERVAL_MS = 10_000  # 60s–5min: patient wait for trans
 AUTO_RESULT_POLL_VERY_SLOW_MS = 20_000      # 5min–12min: long video
 AUTO_RESULT_POLL_TIMEOUT_SECONDS = 720      # hard cap: 12 minutes
 
+ANALYSIS_MODE_OPTIONS = [
+    ("Auto", "auto"),
+    ("深度分析", "argument"),
+    ("实用提炼", "guide"),
+    ("推荐导览", "review"),
+]
+
 
 def _safe_domain(url: str) -> str:
     return urlparse(url).netloc or url
@@ -116,6 +124,20 @@ def _friendly_error_summary(state: OperationViewState) -> str:
 
 def _load_export_metadata(metadata_path: Path) -> dict[str, object]:
     return json.loads(metadata_path.read_text(encoding="utf-8"))
+
+
+def _resolved_mode_from_entry(entry: ResultWorkspaceEntry) -> str | None:
+    normalized = entry.details.get("normalized")
+    if not isinstance(normalized, dict):
+        return None
+    metadata = normalized.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    llm_processing = metadata.get("llm_processing")
+    if not isinstance(llm_processing, dict):
+        return None
+    value = str(llm_processing.get("resolved_mode") or "").strip().lower()
+    return value or None
 
 
 def _format_updated_at(timestamp: float) -> str:
@@ -365,6 +387,11 @@ class MainWindow(QMainWindow):
         self.url_input.textChanged.connect(self._sync_video_download_controls)
         self.url_input.setObjectName("UrlInput")
 
+        self.analysis_mode_combo = QComboBox()
+        self.analysis_mode_combo.setObjectName("GhostButton")
+        for label, value in ANALYSIS_MODE_OPTIONS:
+            self.analysis_mode_combo.addItem(label, value)
+
         self.save_video_checkbox = QCheckBox("Also save the video file")
         self.save_video_checkbox.setObjectName("SecondaryText")
         self.save_video_checkbox.setChecked(False)
@@ -398,6 +425,7 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(eyebrow, 0, Qt.AlignLeft)
         card_layout.addWidget(intro)
         card_layout.addWidget(self.url_input)
+        card_layout.addWidget(self.analysis_mode_combo, 0, Qt.AlignLeft)
         card_layout.addWidget(self.save_video_checkbox, 0, Qt.AlignLeft)
         card_layout.addWidget(self.video_mode_hint)
         card_layout.addLayout(actions)
@@ -881,6 +909,7 @@ class MainWindow(QMainWindow):
     def _reset_to_ready_state(self) -> None:
         self._stop_result_polling()
         self.url_input.clear()
+        self.analysis_mode_combo.setCurrentIndex(0)
         self.save_video_checkbox.setChecked(False)
         self._sync_video_download_controls("")
         self._current_url = ""
@@ -928,6 +957,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.task_page)
         strategy = "browser" if force_browser else route.strategy
         video_download_mode = self._selected_video_download_mode(route)
+        requested_mode = self._selected_requested_mode()
 
         if strategy == "browser":
             profile_dir = route.profile_dir(self.workflow.service.settings)
@@ -935,6 +965,7 @@ class MainWindow(QMainWindow):
                 lambda progress: self.workflow.export_browser_job(
                     url=url,
                     platform=route.platform,
+                    requested_mode=requested_mode,
                     video_download_mode=video_download_mode,
                     profile_dir=profile_dir,
                     wait_for_selector=route.wait_for_selector,
@@ -947,6 +978,7 @@ class MainWindow(QMainWindow):
                 lambda progress: self.workflow.export_url_job(
                     url=url,
                     platform=route.platform,
+                    requested_mode=requested_mode,
                     video_download_mode=video_download_mode,
                     on_progress=progress,
                 )
@@ -994,6 +1026,9 @@ class MainWindow(QMainWindow):
         if route.is_video and self.save_video_checkbox.isChecked():
             return "video"
         return "audio"
+
+    def _selected_requested_mode(self) -> str:
+        return str(self.analysis_mode_combo.currentData() or "auto")
 
     def _on_task_progress(self, stage: str) -> None:
         self.stage_label.setText(STAGE_LABELS.get(stage, stage))
@@ -1178,7 +1213,11 @@ class MainWindow(QMainWindow):
         if result_entry.state == "processed":
             self._latest_result_entry = result_entry
             brief = result_entry.details.get("insight_brief")
-            self.result_inline.load_entry(result_entry, brief=brief)
+            self.result_inline.load_entry(
+                result_entry,
+                brief=brief,
+                resolved_mode=_resolved_mode_from_entry(result_entry),
+            )
             self._stop_result_polling()
             self._elapsed_timer.stop()
             self._elapsed_label.hide()
@@ -1233,7 +1272,7 @@ class MainWindow(QMainWindow):
         if not isinstance(brief, InsightBriefV2):
             brief = None
         self._latest_result_entry = entry
-        self.result_inline.load_entry(entry, brief=brief)
+        self.result_inline.load_entry(entry, brief=brief, resolved_mode=_resolved_mode_from_entry(entry))
         self.stack.setCurrentWidget(self.result_inline)
 
     def _set_meta_grid_visible(self, visible: bool) -> None:
