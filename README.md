@@ -46,6 +46,12 @@ Engineering:
 - `docs/executable-plan-2026-03-16.md`
 - `docs/monorepo-github-plan-2026-03-15.md`
 
+Lightweight domain benchmark:
+
+- `tests/fixtures/domain_benchmark/` is a fixed 8-sample lightweight regression guard for benchmark metadata only
+- it is not a heavyweight evaluation suite
+- the Task 1 test verifies manifest coverage plus agreement between each manifest entry and its `source.json`, not end-to-end routing quality
+
 Background and historical reference:
 
 - `docs/cross-review-2026-03-14.md`
