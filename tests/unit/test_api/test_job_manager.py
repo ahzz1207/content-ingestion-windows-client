@@ -146,6 +146,21 @@ class JobManagerTests(unittest.TestCase):
         self.assertIn("Structured headline", result.normalized_markdown or "")
         self.assertEqual(result.insight_brief["hero"]["title"], "Structured headline")
 
+    def test_get_job_result_exposes_product_view(self) -> None:
+        self._write_processed_job("job-product-view", include_product_view=True)
+
+        result = self.manager.get_job_result("job-product-view")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        product_view = result.structured_result.get("product_view")
+        self.assertIsInstance(product_view, dict)
+        assert isinstance(product_view, dict)
+        self.assertEqual(product_view["hero"]["title"], "Product view hero")
+        self.assertEqual(product_view["sections"][0]["blocks"][0]["text"], "Product-view-first paragraph.")
+        payload = result.to_dict()
+        self.assertEqual(payload["structured_result"]["product_view"]["hero"]["title"], "Product view hero")
+
     def test_get_job_result_returns_processing_status_for_unready_jobs(self) -> None:
         self._write_job("processing", "job-processing", source_url="https://example.com/processing")
 
@@ -321,7 +336,7 @@ class JobManagerTests(unittest.TestCase):
         if dirname == "failed" and error:
             (job_dir / "error.json").write_text(json.dumps({"message": error}), encoding="utf-8")
 
-    def _write_processed_job(self, job_id: str) -> None:
+    def _write_processed_job(self, job_id: str, *, include_product_view: bool = False) -> None:
         job_dir = self.shared_root / "processed" / job_id
         (job_dir / "analysis" / "llm").mkdir(parents=True, exist_ok=True)
         (job_dir / "analysis" / "transcript").mkdir(parents=True, exist_ok=True)
@@ -369,6 +384,30 @@ class JobManagerTests(unittest.TestCase):
             },
             "warnings": [{"message": "Structured warning"}],
         }
+        if include_product_view:
+            structured_result["product_view"] = {
+                "hero": {
+                    "title": "Product view hero",
+                    "dek": "Product view dek",
+                    "bottom_line": "Product view bottom line",
+                },
+                "chips": [
+                    {"label": "Goal", "value": "Analysis"},
+                ],
+                "sections": [
+                    {
+                        "id": "section-1",
+                        "title": "Product Section",
+                        "kind": "analysis",
+                        "priority": 1,
+                        "collapsed_by_default": False,
+                        "blocks": [
+                            {"type": "paragraph", "text": "Product-view-first paragraph."},
+                        ],
+                    }
+                ],
+                "render_hints": {"layout_family": "analysis_brief"},
+            }
         normalized = {
             "job_id": job_id,
             "status": "success",

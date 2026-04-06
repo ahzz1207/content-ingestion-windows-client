@@ -239,6 +239,9 @@ class JobManager:
         metadata = self._source_metadata(entry)
         normalized_markdown = self._read_text(entry.normalized_md_path)
         structured_result = self._coerce_dict(entry.details.get("structured_result"))
+        product_view = self._coerce_dict(entry.details.get("product_view"))
+        if product_view and not structured_result.get("product_view"):
+            structured_result = {**structured_result, "product_view": product_view}
         warnings = self._collect_warnings(entry)
 
         return JobResultDetail(

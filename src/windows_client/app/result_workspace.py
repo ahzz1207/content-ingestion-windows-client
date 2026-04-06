@@ -137,6 +137,7 @@ def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:
         "metadata": _read_json_file(metadata_path) if metadata_path.exists() else {},
         "llm_processing": llm_processing,
         "structured_result": structured_result,
+        "product_view": _coerce_dict(structured_result.get("product_view")),
         "insight_brief": brief,
         "llm_image_input": llm_image_input,
         "visual_findings": visual_findings,

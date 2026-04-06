@@ -76,6 +76,77 @@ def _structured_entry(key_points_count: int = 3) -> object:
     return entry
 
 
+def _product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "summary": {"headline": "Legacy headline", "short_text": "Legacy summary."},
+                    "key_points": [{"title": "Legacy point", "details": "Legacy detail"}],
+                    "product_view": {
+                        "hero": {
+                            "title": "Product hero",
+                            "dek": "Product dek",
+                            "bottom_line": "Product bottom line",
+                        },
+                        "chips": [{"label": "Audience", "value": "Operators"}],
+                        "sections": [
+                            {
+                                "id": "section-1",
+                                "title": "Product section",
+                                "kind": "analysis",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [
+                                    {"type": "paragraph", "text": "Product paragraph."},
+                                    {"type": "bullet_list", "items": ["Bullet one", "Bullet two"]},
+                                ],
+                            }
+                        ],
+                        "render_hints": {"layout_family": "analysis_brief"},
+                    },
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass"}},
+        }
+    }
+    return entry
+
+
+def _product_view_only_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "hero": {
+                            "title": "Product-only hero",
+                            "dek": "Product-only dek",
+                            "bottom_line": "Product-only bottom line",
+                        },
+                        "sections": [
+                            {
+                                "id": "section-1",
+                                "title": "Product-only section",
+                                "kind": "analysis",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [
+                                    {"type": "paragraph", "text": "Product-only paragraph."},
+                                ],
+                            }
+                        ],
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass"}},
+        }
+    }
+    return entry
+
+
 class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -140,6 +211,41 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
 
         self.assertIsNotNone(html)
         self.assertIn("推荐导览", html)
+
+    def test_product_view_renders_before_legacy_shape_when_present(self) -> None:
+        entry = _product_view_entry()
+
+        html = _structured_preview_html(entry)
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("Product hero", html)
+        self.assertIn("Product section", html)
+        self.assertIn("Product paragraph.", html)
+        self.assertIn("Bullet one", html)
+        self.assertNotIn("Legacy headline", html)
+        self.assertNotIn("Legacy point", html)
+
+    def test_product_view_falls_back_to_legacy_rendering_when_absent(self) -> None:
+        entry = _structured_entry(key_points_count=1)
+
+        html = _structured_preview_html(entry)
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("Test", html)
+        self.assertIn("Point 0", html)
+
+    def test_product_view_renders_from_normalized_payload_without_legacy_fields(self) -> None:
+        entry = _product_view_only_entry()
+
+        html = _structured_preview_html(entry)
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("Product-only hero", html)
+        self.assertIn("Product-only section", html)
+        self.assertIn("Product-only paragraph.", html)
 
 
 class TestResolvedEvidenceHtmlUsesAllRefs(unittest.TestCase):

@@ -105,6 +105,22 @@ def _preview_body(entry: ResultWorkspaceEntry) -> str:
 
 
 def _structured_result_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
+    details_result = entry.details.get("structured_result")
+    if isinstance(details_result, dict):
+        result = details_result
+        if any(
+            result.get(key)
+            for key in (
+                "product_view",
+                "summary",
+                "key_points",
+                "analysis_items",
+                "verification_items",
+                "synthesis",
+                "editorial",
+            )
+        ):
+            return result
     normalized = entry.details.get("normalized")
     if not isinstance(normalized, dict):
         return None
@@ -116,10 +132,25 @@ def _structured_result_payload(entry: ResultWorkspaceEntry) -> dict[str, object]
         return None
     if not any(
         result.get(key)
-        for key in ("summary", "key_points", "analysis_items", "verification_items", "synthesis", "editorial")
+        for key in ("product_view", "summary", "key_points", "analysis_items", "verification_items", "synthesis", "editorial")
     ):
         return None
     return result
+
+
+def _product_view_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
+    direct_product_view = entry.details.get("product_view")
+    if isinstance(direct_product_view, dict) and any(direct_product_view.get(key) for key in ("hero", "sections", "chips")):
+        return direct_product_view
+    result = _structured_result_payload(entry)
+    if not isinstance(result, dict):
+        return None
+    product_view = result.get("product_view")
+    if not isinstance(product_view, dict):
+        return None
+    if not any(product_view.get(key) for key in ("hero", "sections", "chips")):
+        return None
+    return product_view
 
 
 def _llm_processing_payload(entry: ResultWorkspaceEntry) -> dict[str, object] | None:
@@ -328,6 +359,13 @@ def _structured_preview_html(
     if mode_pill:
         sections.append(mode_pill)
 
+    product_view = _product_view_payload(entry)
+    if product_view is not None:
+        product_view_html = _product_view_html(product_view)
+        if product_view_html:
+            sections.append(product_view_html)
+            return f"<div class='preview-reading structured-result'>{''.join(sections)}</div>"
+
     summary = result.get("summary")
     if isinstance(summary, dict):
         headline = str(summary.get("headline") or "").strip()
@@ -449,6 +487,94 @@ def _structured_preview_html(
     return f"<div class='preview-reading structured-result'>{''.join(sections)}</div>"
 
 
+def _product_view_html(product_view: dict[str, object]) -> str:
+    sections: list[str] = []
+
+    hero = product_view.get("hero")
+    if isinstance(hero, dict):
+        title = str(hero.get("title") or "").strip()
+        dek = str(hero.get("dek") or "").strip()
+        bottom_line = str(hero.get("bottom_line") or "").strip()
+        worth_reading_reason = str(hero.get("worth_reading_reason") or "").strip()
+        hero_bits = [
+            f"<h2>{html.escape(title or 'Summary')}</h2>",
+        ]
+        if dek:
+            hero_bits.append(f"<p>{html.escape(dek)}</p>")
+        if bottom_line and bottom_line != dek:
+            hero_bits.append(f"<p>{html.escape(bottom_line)}</p>")
+        if worth_reading_reason:
+            hero_bits.append(f"<p>{html.escape(worth_reading_reason)}</p>")
+        if title or dek or bottom_line or worth_reading_reason:
+            sections.append(f"<section class='result-section result-hero'>{''.join(hero_bits)}</section>")
+
+    chips = product_view.get("chips")
+    if isinstance(chips, list) and chips:
+        chip_html: list[str] = []
+        for chip in chips:
+            if not isinstance(chip, dict):
+                continue
+            label = str(chip.get("label") or "").strip()
+            value = str(chip.get("value") or "").strip()
+            text = ": ".join(part for part in (label, value) if part)
+            if text:
+                chip_html.append(f"<div class='status-chip status-supported'>{html.escape(text)}</div>")
+        if chip_html:
+            sections.append("<section class='result-section'>" + "".join(chip_html) + "</section>")
+
+    raw_sections = product_view.get("sections")
+    if isinstance(raw_sections, list):
+        sorted_sections = sorted(
+            [item for item in raw_sections if isinstance(item, dict)],
+            key=lambda item: int(item.get("priority") or 0),
+        )
+        for item in sorted_sections:
+            title = str(item.get("title") or "").strip()
+            blocks_html = _product_view_blocks_html(item.get("blocks"))
+            if not blocks_html:
+                continue
+            heading = f"<h2>{html.escape(title)}</h2>" if title else ""
+            sections.append(f"<section class='result-section'>{heading}{blocks_html}</section>")
+
+    return "".join(sections)
+
+
+def _product_view_blocks_html(blocks: object) -> str:
+    if not isinstance(blocks, list):
+        return ""
+    rendered: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type") or "").strip().lower()
+        if block_type == "paragraph":
+            text = str(block.get("text") or "").strip()
+            if text:
+                rendered.append(f"<p>{html.escape(text)}</p>")
+            continue
+        if block_type in {"bullet_list", "step_list", "warning_list", "evidence_list"}:
+            items = block.get("items")
+            if not isinstance(items, list) or not items:
+                continue
+            tag = "ol" if block_type == "step_list" else "ul"
+            rendered_items: list[str] = []
+            for item in items:
+                if isinstance(item, dict):
+                    text = str(item.get("text") or item.get("value") or item.get("label") or "").strip()
+                else:
+                    text = str(item).strip()
+                if text:
+                    rendered_items.append(f"<li>{html.escape(text)}</li>")
+            if rendered_items:
+                rendered.append(f"<{tag}>{''.join(rendered_items)}</{tag}>")
+            continue
+        if block_type == "quote":
+            text = str(block.get("text") or "").strip()
+            if text:
+                rendered.append(f"<blockquote><p>{html.escape(text)}</p></blockquote>")
+    return "".join(rendered)
+
+
 def _coverage_warning_html(entry: ResultWorkspaceEntry) -> str:
     """Return a coverage warning HTML block if the entry has truncation data."""
     coverage = entry.details.get("coverage")
@@ -492,6 +618,8 @@ def _truncate_title(text: str, *, max_length: int = 64) -> str:
 def _preview_hint(entry: ResultWorkspaceEntry) -> str:
     """Return a human-readable hint line for the preview section."""
     if entry.state == "processed":
+        if _product_view_payload(entry) is not None:
+            return "Reader-first product view from the latest analysis output."
         if _structured_result_payload(entry) is not None:
             return "Structured summary, analysis, and evidence from the latest analysis output."
         if entry.analysis_state == "skipped":

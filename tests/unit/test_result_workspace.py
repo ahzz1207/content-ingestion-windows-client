@@ -75,6 +75,59 @@ class ResultWorkspaceTests(unittest.TestCase):
         self.assertEqual(result.preview_text, "First paragraph.\n\nSecond paragraph.")
         self.assertEqual(result.analysis_state, "ready")
 
+    def test_load_processed_job_result_preserves_product_view(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-product-view"
+        job_dir.mkdir()
+        product_view = {
+            "hero": {
+                "title": "Reader-first title",
+                "dek": "Reader dek",
+                "bottom_line": "Reader bottom line",
+            },
+            "sections": [
+                {
+                    "id": "takeaways",
+                    "title": "Takeaways",
+                    "kind": "analysis",
+                    "priority": 1,
+                    "collapsed_by_default": False,
+                    "blocks": [
+                        {"type": "paragraph", "text": "Render-ready paragraph."},
+                    ],
+                }
+            ],
+            "render_hints": {"layout_family": "analysis_brief"},
+        }
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-product-view"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-product-view",
+                    "asset": {
+                        "title": "Legacy title",
+                        "result": {
+                            "summary": {
+                                "headline": "Legacy headline",
+                                "short_text": "Legacy summary.",
+                            },
+                            "product_view": product_view,
+                        },
+                    },
+                    "metadata": {"llm_processing": {"status": "pass"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        result = load_job_result(self.shared_root, "job-product-view")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        structured_result = result.details.get("structured_result", {})
+        self.assertEqual(structured_result.get("product_view"), product_view)
+        self.assertEqual(result.details.get("product_view"), product_view)
+
     def test_load_failed_job_result(self) -> None:
         job_dir = self.shared_root / "failed" / "job-456"
         job_dir.mkdir()
