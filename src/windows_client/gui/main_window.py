@@ -76,6 +76,7 @@ ANALYSIS_MODE_OPTIONS = [
     ("Auto", "auto"),
     ("深度分析", "argument"),
     ("实用提炼", "guide"),
+    ("叙事导读", "narrative"),
     ("推荐导览", "review"),
 ]
 

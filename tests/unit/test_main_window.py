@@ -12,7 +12,7 @@ if str(SRC_DIR) not in sys.path:
 from PySide6.QtWidgets import QApplication
 
 from windows_client.app.view_models import DoctorSnapshot, JobExportSnapshot, OperationViewState
-from windows_client.gui.main_window import MainWindow, _normalize_url, _preview_html
+from windows_client.gui.main_window import ANALYSIS_MODE_OPTIONS, MainWindow, _normalize_url, _preview_html
 
 
 class MainWindowTests(unittest.TestCase):
@@ -103,6 +103,40 @@ class MainWindowTests(unittest.TestCase):
         self.window.analysis_mode_combo.setCurrentIndex(2)
 
         self.assertEqual(self.window._selected_requested_mode(), "guide")
+
+    def test_analysis_mode_options_include_expected_narrative_tuple(self) -> None:
+        self.assertIn(("叙事导读", "narrative"), ANALYSIS_MODE_OPTIONS)
+
+    def test_start_threads_requested_mode_only(self) -> None:
+        self.window._watcher_running = True
+        self.window.url_input.setText("https://example.com/article")
+        self.window.analysis_mode_combo.setCurrentIndex(4)
+
+        class _Signal:
+            def connect(self, callback):
+                self.callback = callback
+
+        class _FakeThread:
+            def __init__(self, task):
+                self.task = task
+                self.progress_changed = _Signal()
+                self.completed = _Signal()
+                self.crashed = _Signal()
+
+            def start(self) -> None:
+                self.task(lambda stage: None)
+
+        with patch("windows_client.gui.main_window.WorkflowTaskThread", _FakeThread):
+            self.window._start_from_input()
+
+        self.assertEqual(self.workflow.export_url_calls, [
+            {
+                "url": "https://example.com/article",
+                "platform": "generic",
+                "requested_mode": "review",
+                "video_download_mode": "audio",
+            }
+        ])
 
     def test_preview_html_prefers_structured_result_sections(self) -> None:
         entry = _processed_entry("job-structured")
@@ -285,6 +319,7 @@ class NormalizeUrlTests(unittest.TestCase):
 class _FakeWorkflow:
     def __init__(self, shared_root: Path) -> None:
         self.service = _FakeService(shared_root)
+        self.export_url_calls: list[dict[str, object]] = []
 
     def run_doctor(self) -> OperationViewState:
         return OperationViewState(
@@ -298,6 +333,39 @@ class _FakeWorkflow:
                     "shared_inbox_exists": "True",
                     "browser_profiles_dir": str(self.service.settings.effective_shared_inbox_root / "profiles"),
                 },
+            ),
+        )
+
+    def export_url_job(
+        self,
+        *,
+        url: str,
+        platform: str | None = None,
+        requested_mode: str = "auto",
+        video_download_mode: str = "audio",
+        on_progress=None,
+    ) -> OperationViewState:
+        self.export_url_calls.append(
+            {
+                "url": url,
+                "platform": platform,
+                "requested_mode": requested_mode,
+                "video_download_mode": video_download_mode,
+            }
+        )
+        if on_progress is not None:
+            on_progress("collecting")
+            on_progress("exporting")
+        return OperationViewState(
+            operation="export-url-job",
+            status="success",
+            summary="ok",
+            job=JobExportSnapshot(
+                job_id="job-456",
+                job_dir=self.service.settings.effective_shared_inbox_root / "incoming" / "job-456",
+                payload_path=self.service.settings.effective_shared_inbox_root / "incoming" / "job-456" / "payload.html",
+                metadata_path=self.service.settings.effective_shared_inbox_root / "incoming" / "job-456" / "metadata.json",
+                ready_path=self.service.settings.effective_shared_inbox_root / "incoming" / "job-456" / "READY",
             ),
         )
 

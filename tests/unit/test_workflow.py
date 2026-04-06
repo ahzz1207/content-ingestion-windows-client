@@ -88,6 +88,14 @@ class WindowsClientWorkflowTests(unittest.TestCase):
         self.assertEqual(state.status, "success")
         self.assertEqual(self.service.export_url_job.call_args.kwargs["requested_mode"], "auto")
 
+    def test_export_url_job_threads_narrative_requested_mode(self) -> None:
+        self.service.export_url_job = MagicMock(return_value=self.service.export_mock_job(url="https://example.com/article"))
+
+        state = self.workflow.export_url_job(url="https://example.com/article", requested_mode="narrative")
+
+        self.assertEqual(state.status, "success")
+        self.assertEqual(self.service.export_url_job.call_args.kwargs["requested_mode"], "narrative")
+
     def test_browser_login_returns_profile_snapshot(self) -> None:
         profile_dir = self.project_root / "data" / "browser-profiles" / "wechat"
         self.service.browser_collector.open_profile_session.return_value = profile_dir
