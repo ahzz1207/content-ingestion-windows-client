@@ -147,6 +147,110 @@ def _product_view_only_entry() -> object:
     return entry
 
 
+def _argument_product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "hero": {
+                            "title": "Policy claim is plausible but operationally weak",
+                            "dek": "The article makes a case for direction, not for delivery readiness.",
+                            "bottom_line": "You should separate the strategic argument from the execution claim.",
+                        },
+                        "sections": [
+                            {
+                                "id": "judgment",
+                                "title": "核心判断",
+                                "kind": "core_judgment",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "paragraph", "text": "The argument works at the strategic layer."}],
+                            },
+                            {
+                                "id": "arguments",
+                                "title": "主要论点",
+                                "kind": "main_arguments",
+                                "priority": 2,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["Argument A", "Argument B"]}],
+                            },
+                            {
+                                "id": "evidence",
+                                "title": "关键论据",
+                                "kind": "evidence",
+                                "priority": 3,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["Evidence A", "Evidence B"]}],
+                            },
+                            {
+                                "id": "tensions",
+                                "title": "张力与漏洞",
+                                "kind": "tensions",
+                                "priority": 4,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["Risk A"]}],
+                            },
+                        ],
+                        "render_hints": {"layout_family": "analysis_brief"},
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "argument"}},
+        }
+    }
+    return entry
+
+
+def _guide_product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "hero": {
+                            "title": "一句话先看完",
+                            "dek": "保留最关键的结论即可。",
+                            "bottom_line": "别被长篇背景带走。",
+                        },
+                        "sections": [
+                            {
+                                "id": "summary",
+                                "title": "一句话总结",
+                                "kind": "one_line_summary",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "paragraph", "text": "先抓结论，再看是否需要细节。"}],
+                            },
+                            {
+                                "id": "takeaways",
+                                "title": "核心要点",
+                                "kind": "core_takeaways",
+                                "priority": 2,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["要点 A", "要点 B", "要点 C"]}],
+                            },
+                            {
+                                "id": "remember",
+                                "title": "记住这件事",
+                                "kind": "remember_this",
+                                "priority": 3,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "paragraph", "text": "真正改变判断的是最后一个结论。"}],
+                            },
+                        ],
+                        "render_hints": {"layout_family": "practical_guide"},
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "guide"}},
+        }
+    }
+    return entry
+
+
 class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -246,6 +350,35 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
         self.assertIn("Product-only hero", html)
         self.assertIn("Product-only section", html)
         self.assertIn("Product-only paragraph.", html)
+
+    def test_argument_product_view_renders_as_analysis_brief_not_compact_takeaway(self) -> None:
+        entry = _argument_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="argument")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("analysis-brief-layout", html)
+        self.assertIn("analysis-hero", html)
+        self.assertIn("核心判断", html)
+        self.assertIn("主要论点", html)
+        self.assertIn("关键论据", html)
+        self.assertIn("张力与漏洞", html)
+        self.assertNotIn("一句话总结", html)
+
+    def test_guide_product_view_renders_as_compact_takeaway_not_analysis_brief(self) -> None:
+        entry = _guide_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="guide")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("guide-digest-layout", html)
+        self.assertIn("guide-compact-hero", html)
+        self.assertIn("一句话总结", html)
+        self.assertIn("核心要点", html)
+        self.assertIn("记住这件事", html)
+        self.assertNotIn("关键论据", html)
 
 
 class TestResolvedEvidenceHtmlUsesAllRefs(unittest.TestCase):

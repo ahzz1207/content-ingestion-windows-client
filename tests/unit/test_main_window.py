@@ -13,7 +13,14 @@ from PySide6.QtWidgets import QApplication
 
 from windows_client.app.service import ReinterpretRequest
 from windows_client.app.view_models import DoctorSnapshot, JobExportSnapshot, OperationViewState
-from windows_client.gui.main_window import ANALYSIS_MODE_OPTIONS, MainWindow, _normalize_url, _preview_html
+from windows_client.gui.main_window import (
+    ANALYSIS_MODE_OPTIONS,
+    MainWindow,
+    UI_FONT_STACK,
+    _normalize_url,
+    _preview_html,
+)
+from windows_client.gui.result_renderer import PREVIEW_STYLESHEET
 
 
 class MainWindowTests(unittest.TestCase):
@@ -65,6 +72,17 @@ class MainWindowTests(unittest.TestCase):
 
     def test_technical_details_area_has_visible_height(self) -> None:
         self.assertGreaterEqual(self.window.details_text.minimumHeight(), 180)
+
+    def test_main_window_uses_chinese_friendly_ui_font_stack(self) -> None:
+        stylesheet = self.window.styleSheet()
+
+        self.assertIn(UI_FONT_STACK, stylesheet)
+        self.assertNotIn("Georgia", stylesheet)
+        self.assertNotIn("Times New Roman", stylesheet)
+
+    def test_preview_stylesheet_uses_same_reading_font_stack(self) -> None:
+        self.assertIn(UI_FONT_STACK, PREVIEW_STYLESHEET)
+        self.assertIn(".preview-reading {", PREVIEW_STYLESHEET)
 
     def test_render_success_starts_result_polling_without_manual_refresh_button(self) -> None:
         metadata_path = self.window._current_state.job.metadata_path
@@ -135,6 +153,39 @@ class MainWindowTests(unittest.TestCase):
                 "url": "https://example.com/article",
                 "platform": "generic",
                 "requested_mode": "review",
+                "video_download_mode": "audio",
+            }
+        ])
+
+    def test_wechat_article_start_does_not_force_login_prompt(self) -> None:
+        self.window._watcher_running = True
+        self.window.url_input.setText("https://mp.weixin.qq.com/s/demo?__biz=abc&mid=1&sn=xyz&scene=1")
+
+        class _Signal:
+            def connect(self, callback):
+                self.callback = callback
+
+        class _FakeThread:
+            def __init__(self, task):
+                self.task = task
+                self.progress_changed = _Signal()
+                self.completed = _Signal()
+                self.crashed = _Signal()
+
+            def start(self) -> None:
+                self.task(lambda stage: None)
+
+        with patch("windows_client.gui.main_window.WorkflowTaskThread", _FakeThread), patch(
+            "windows_client.gui.main_window.LoginPromptDialog"
+        ) as login_prompt:
+            self.window._start_from_input()
+
+        login_prompt.assert_not_called()
+        self.assertEqual(self.workflow.export_url_calls, [
+            {
+                "url": "https://mp.weixin.qq.com/s/demo?__biz=abc&mid=1&sn=xyz",
+                "platform": "wechat",
+                "requested_mode": "auto",
                 "video_download_mode": "audio",
             }
         ])
@@ -252,6 +303,111 @@ class MainWindowTests(unittest.TestCase):
             self.window._refresh_current_job_result()
 
         self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+        self.assertTrue(self.window.result_inline._browser.isHidden())
+        self.assertEqual(self.window.result_inline._hero_title.text(), "Test Title")
+
+    def test_completed_job_with_product_view_and_brief_prefers_product_view_in_main_result_page(self) -> None:
+        class _FakeBrief:
+            class hero:
+                title = "Local brief title"
+                one_sentence_take = "Local brief take."
+                content_kind = None
+                author_stance = None
+
+            quick_takeaways = ["Local point"]
+            viewpoints = []
+            coverage = None
+            gaps = []
+
+        entry = _processed_entry("job-product-view")
+        entry.title = "Legacy title"
+        entry.summary = "Legacy summary"
+        entry.details = {
+            "insight_brief": _FakeBrief(),
+            "product_view": {
+                "hero": {
+                    "title": "WSL product title",
+                    "dek": "WSL product dek",
+                },
+                "sections": [
+                    {
+                        "id": "takeaways",
+                        "title": "Takeaways",
+                        "priority": 1,
+                        "blocks": [
+                            {"type": "paragraph", "text": "WSL-owned paragraph."},
+                        ],
+                    }
+                ],
+            },
+        }
+
+        with patch(
+            "windows_client.gui.main_window.load_job_result",
+            return_value=entry,
+        ):
+            self.window._refresh_current_job_result()
+
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+        self.assertFalse(self.window.result_inline._browser.isHidden())
+        self.assertIn("WSL product title", self.window.result_inline._browser.toHtml())
+        self.assertNotEqual(self.window.result_inline._hero_title.text(), "Local brief title")
+
+    def test_completed_job_with_product_view_still_shows_truncation_warnings(self) -> None:
+        class _FakeCoverage:
+            input_truncated = True
+            coverage_ratio = 0.5
+            used_segments = 3
+            total_segments = 6
+
+        class _FakeBrief:
+            class hero:
+                title = "Local brief title"
+                one_sentence_take = "Local brief take."
+                content_kind = None
+                author_stance = None
+
+            quick_takeaways = ["Local point"]
+            viewpoints = []
+            coverage = _FakeCoverage()
+            gaps = []
+
+        entry = _processed_entry("job-product-view-truncation")
+        entry.details = {
+            "insight_brief": _FakeBrief(),
+            "llm_image_input": {
+                "image_input_truncated": True,
+                "image_input_count": 4,
+            },
+            "product_view": {
+                "hero": {
+                    "title": "WSL product title",
+                    "dek": "WSL product dek",
+                },
+                "sections": [
+                    {
+                        "id": "takeaways",
+                        "title": "Takeaways",
+                        "priority": 1,
+                        "blocks": [
+                            {"type": "paragraph", "text": "WSL-owned paragraph."},
+                        ],
+                    }
+                ],
+            },
+        }
+
+        with patch(
+            "windows_client.gui.main_window.load_job_result",
+            return_value=entry,
+        ):
+            self.window._refresh_current_job_result()
+
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+        self.assertFalse(self.window.result_inline._coverage_banner.isHidden())
+        self.assertIn("only 50% of source segments were analysed", self.window.result_inline._coverage_label.text())
+        self.assertFalse(self.window.result_inline._image_truncation_banner.isHidden())
+        self.assertIn("4 image(s) were sent to the model", self.window.result_inline._image_truncation_label.text())
 
     def test_result_load_exception_shows_retry_message(self) -> None:
         with patch(

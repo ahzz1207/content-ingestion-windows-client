@@ -15,6 +15,9 @@ from PySide6.QtWidgets import QLabel
 from windows_client.app.result_workspace import ResultWorkspaceEntry
 
 
+UI_FONT_STACK = "'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI', sans-serif"
+
+
 # ---------------------------------------------------------------------------
 # Pill styling helpers
 # ---------------------------------------------------------------------------
@@ -220,12 +223,23 @@ def _primary_result_button_text(entry: ResultWorkspaceEntry) -> str:
 
 # CSS injected into the preview QTextBrowser document
 PREVIEW_STYLESHEET = """
+.preview-reading {
+    font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI', sans-serif;
+    font-size: 16px;
+    line-height: 1.9;
+    color: #233445;
+}
 .preview-reading p {
     margin: 0 0 14px 0;
-    line-height: 1.85;
 }
 .preview-reading p:first-child {
     margin-top: 0;
+}
+.preview-reading h2,
+.preview-reading h3,
+.preview-reading li,
+.preview-reading blockquote {
+    font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI', sans-serif;
 }
 .structured-result {
     display: block;
@@ -242,15 +256,30 @@ PREVIEW_STYLESHEET = """
 }
 .result-section h2 {
     margin: 0 0 10px 0;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #8f3f25;
+    font-size: 13px;
+    font-weight: 700;
+    color: #7c3d26;
 }
 .result-section h3 {
-    margin: 0 0 8px 0;
-    font-size: 16px;
+    margin: 0 0 10px 0;
+    font-size: 18px;
+    font-weight: 600;
     color: #16202b;
+}
+.preview-reading ul,
+.preview-reading ol {
+    margin: 10px 0 0 0;
+    padding-left: 22px;
+}
+.preview-reading li {
+    margin: 0 0 8px 0;
+    color: #334155;
+}
+.preview-reading blockquote {
+    margin: 14px 0;
+    padding: 0 0 0 14px;
+    border-left: 3px solid rgba(148, 163, 184, 0.28);
+    color: #475569;
 }
 .result-card {
     margin: 0 0 14px 0;
@@ -264,6 +293,62 @@ PREVIEW_STYLESHEET = """
     background: linear-gradient(135deg, rgba(163, 75, 45, 0.08), rgba(22, 32, 43, 0.04));
     border: 1px solid rgba(163, 75, 45, 0.14);
     border-radius: 20px;
+}
+.analysis-brief-layout {
+    display: block;
+}
+.analysis-hero {
+    padding: 22px 24px;
+    background: linear-gradient(135deg, rgba(120, 53, 15, 0.10), rgba(15, 23, 42, 0.05));
+    border: 1px solid rgba(120, 53, 15, 0.18);
+    border-radius: 22px;
+    margin: 0 0 20px 0;
+}
+.analysis-hero h2 {
+    font-size: 23px;
+    margin-bottom: 12px;
+}
+.analysis-section-label {
+    display: inline-block;
+    margin: 0 0 10px 0;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(120, 53, 15, 0.10);
+    color: #9a3412;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.analysis-card-grid {
+    display: block;
+}
+.guide-digest-layout {
+    display: block;
+}
+.guide-compact-hero {
+    padding: 14px 16px;
+    background: rgba(14, 116, 144, 0.06);
+    border: 1px solid rgba(14, 116, 144, 0.14);
+    border-radius: 16px;
+    margin: 0 0 16px 0;
+}
+.guide-compact-hero h2 {
+    font-size: 19px;
+    margin-bottom: 8px;
+}
+.guide-digest-layout .result-section {
+    margin: 0 0 14px 0;
+    padding: 0 0 12px 0;
+}
+.guide-section-label {
+    display: inline-block;
+    margin: 0 0 8px 0;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(14, 116, 144, 0.10);
+    color: #0f766e;
+    font-size: 11px;
+    font-weight: 700;
 }
 .result-takeaway {
     padding: 18px 20px;
@@ -488,6 +573,15 @@ def _structured_preview_html(
 
 
 def _product_view_html(product_view: dict[str, object]) -> str:
+    sections_data = product_view.get("sections")
+    if isinstance(sections_data, list):
+        section_kinds = {str(item.get("kind") or "").strip() for item in sections_data if isinstance(item, dict)}
+        layout = str(product_view.get("layout") or "").strip()
+        if layout == "analysis_brief" or {"core_judgment", "main_arguments", "evidence"}.issubset(section_kinds):
+            return _analysis_product_view_html(product_view)
+        if layout == "practical_guide" or {"one_line_summary", "core_takeaways"}.issubset(section_kinds):
+            return _guide_product_view_html(product_view)
+
     sections: list[str] = []
 
     hero = product_view.get("hero")
@@ -537,6 +631,76 @@ def _product_view_html(product_view: dict[str, object]) -> str:
             sections.append(f"<section class='result-section'>{heading}{blocks_html}</section>")
 
     return "".join(sections)
+
+
+def _analysis_product_view_html(product_view: dict[str, object]) -> str:
+    parts: list[str] = ["<div class='analysis-brief-layout'>"]
+    hero = product_view.get("hero")
+    if isinstance(hero, dict):
+        title = str(hero.get("title") or "").strip()
+        dek = str(hero.get("dek") or "").strip()
+        bottom_line = str(hero.get("bottom_line") or "").strip()
+        hero_bits = [f"<h2>{html.escape(title or '深度分析')}</h2>"]
+        if dek:
+            hero_bits.append(f"<p>{html.escape(dek)}</p>")
+        if bottom_line and bottom_line != dek:
+            hero_bits.append(f"<p>{html.escape(bottom_line)}</p>")
+        parts.append(f"<section class='analysis-hero'>{''.join(hero_bits)}</section>")
+
+    raw_sections = product_view.get("sections")
+    if isinstance(raw_sections, list):
+        sorted_sections = sorted(
+            [item for item in raw_sections if isinstance(item, dict)],
+            key=lambda item: int(item.get("priority") or 0),
+        )
+        for item in sorted_sections:
+            title = str(item.get("title") or "").strip()
+            blocks_html = _product_view_blocks_html(item.get("blocks"))
+            if not blocks_html:
+                continue
+            parts.append(
+                "<section class='result-section'>"
+                f"<div class='analysis-section-label'>{html.escape(title)}</div>"
+                f"<div class='analysis-card-grid'>{blocks_html}</div>"
+                "</section>"
+            )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _guide_product_view_html(product_view: dict[str, object]) -> str:
+    parts: list[str] = ["<div class='guide-digest-layout'>"]
+    hero = product_view.get("hero")
+    if isinstance(hero, dict):
+        title = str(hero.get("title") or "").strip()
+        dek = str(hero.get("dek") or "").strip()
+        bottom_line = str(hero.get("bottom_line") or "").strip()
+        hero_bits = [f"<h2>{html.escape(title or '要点提炼')}</h2>"]
+        if dek:
+            hero_bits.append(f"<p>{html.escape(dek)}</p>")
+        if bottom_line and bottom_line != dek:
+            hero_bits.append(f"<p>{html.escape(bottom_line)}</p>")
+        parts.append(f"<section class='guide-compact-hero'>{''.join(hero_bits)}</section>")
+
+    raw_sections = product_view.get("sections")
+    if isinstance(raw_sections, list):
+        sorted_sections = sorted(
+            [item for item in raw_sections if isinstance(item, dict)],
+            key=lambda item: int(item.get("priority") or 0),
+        )
+        for item in sorted_sections:
+            title = str(item.get("title") or "").strip()
+            blocks_html = _product_view_blocks_html(item.get("blocks"))
+            if not blocks_html:
+                continue
+            parts.append(
+                "<section class='result-section'>"
+                f"<div class='guide-section-label'>{html.escape(title)}</div>"
+                f"{blocks_html}"
+                "</section>"
+            )
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def _product_view_blocks_html(blocks: object) -> str:

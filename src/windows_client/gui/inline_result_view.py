@@ -23,7 +23,15 @@ from PySide6.QtWidgets import (
 
 from windows_client.app.insight_brief import InsightBriefV2
 from windows_client.app.result_workspace import ResultWorkspaceEntry
-from windows_client.gui.result_renderer import PREVIEW_STYLESHEET, _markdown_filename, _preview_html, entry_to_markdown
+from windows_client.gui.result_renderer import (
+    PREVIEW_STYLESHEET,
+    _markdown_filename,
+    _mode_pill_html,
+    _preview_html,
+    _product_view_payload,
+    _product_view_html,
+    entry_to_markdown,
+)
 
 MODE_LABELS = {
     "argument": "深度分析",
@@ -296,6 +304,13 @@ class InlineResultView(QWidget):
         """Populate the view from a ResultWorkspaceEntry with an optional InsightBriefV2."""
         self._entry = entry
         mode_label = MODE_LABELS.get((resolved_mode or "").strip().lower(), "")
+        warnings_brief = brief
+        product_view = _product_view_payload(entry)
+        product_hero = product_view.get("hero") if isinstance(product_view, dict) else None
+        if not isinstance(product_hero, dict):
+            product_hero = None
+        if product_view is not None:
+            brief = None
 
         # Hero fields common to both paths
         source = entry.source_url or entry.canonical_url
@@ -398,8 +413,14 @@ class InlineResultView(QWidget):
             self._gaps_frame.setVisible(bool(gaps))
         else:
             # Degraded view — no structured brief
-            self._hero_title.setText(entry.title or "Analysis Complete")
-            self._hero_take.setText(getattr(entry, "summary", "") or "")
+            hero_title = str(product_hero.get("title") or "").strip() if product_hero else ""
+            hero_take = (
+                str(product_hero.get("dek") or product_hero.get("bottom_line") or "").strip()
+                if product_hero
+                else ""
+            )
+            self._hero_title.setText(hero_title or entry.title or "Analysis Complete")
+            self._hero_take.setText(hero_take or getattr(entry, "summary", "") or "")
             self._hero_byline.setVisible(False)
             self._mode_chip.setText(mode_label)
             self._mode_chip.setVisible(bool(mode_label))
@@ -410,9 +431,30 @@ class InlineResultView(QWidget):
             self._verification_frame.hide()
             self._bottom_line_frame.hide()
             self._divergent_frame.hide()
-            self._coverage_banner.hide()
-            self._image_truncation_banner.hide()
             self._gaps_frame.hide()
+
+        coverage = getattr(warnings_brief, "coverage", None)
+        if coverage is not None and coverage.input_truncated:
+            pct = int(coverage.coverage_ratio * 100)
+            self._coverage_label.setText(
+                f"\u26a0 Coverage warning: only {pct}% of source segments were analysed "
+                f"({coverage.used_segments}/{coverage.total_segments}). "
+                "Conclusions may be incomplete."
+            )
+            self._coverage_banner.show()
+        else:
+            self._coverage_banner.hide()
+
+        llm_image = entry.details.get("llm_image_input", {})
+        if llm_image.get("image_input_truncated"):
+            count = llm_image.get("image_input_count", "?")
+            self._image_truncation_label.setText(
+                f"\u26a0 Image input limit reached: {count} image(s) were sent to the model. "
+                "Visual analysis may be incomplete."
+            )
+            self._image_truncation_banner.show()
+        else:
+            self._image_truncation_banner.hide()
 
         # Visual Evidence (video content — always populated from entry, not brief)
         visual_findings = [f for f in entry.details.get("visual_findings") or [] if isinstance(f, dict)]
@@ -450,7 +492,15 @@ class InlineResultView(QWidget):
         else:
             self._card_frame.hide()
 
-        if brief is None:
+        if product_view is not None:
+            sections: list[str] = []
+            mode_pill = _mode_pill_html(entry, resolved_mode)
+            if mode_pill:
+                sections.append(mode_pill)
+            sections.append(_product_view_html(product_view))
+            self._browser.setHtml(f"<div class='preview-reading structured-result'>{''.join(sections)}</div>")
+            self._browser.show()
+        elif brief is None:
             self._browser.setHtml(_preview_html(entry, resolved_mode=resolved_mode))
             self._browser.show()
         else:

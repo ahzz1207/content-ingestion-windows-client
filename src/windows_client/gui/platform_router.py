@@ -37,9 +37,7 @@ def resolve_platform_route(url: str) -> PlatformRoute:
         return PlatformRoute(
             platform="wechat",
             display_name="WeChat Article",
-            strategy="browser",
-            start_url="https://mp.weixin.qq.com/",
-            profile_slug="wechat",
+            strategy="http",
             wait_for_selector="#js_content",
             wait_for_selector_state="visible",
         )

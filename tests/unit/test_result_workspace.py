@@ -15,6 +15,75 @@ from windows_client.app.service import ReinterpretRequest, WindowsClientService
 from windows_client.config.settings import Settings
 
 
+class _FakeWslBridge:
+    def __init__(self, processed_root: Path) -> None:
+        self.processed_root = processed_root
+        self.watch_once_calls: list[Path] = []
+
+    def watch_once(self, *, shared_root: Path | None = None) -> str:
+        assert shared_root is not None
+        self.watch_once_calls.append(shared_root)
+        incoming_root = shared_root / "incoming"
+        for incoming_dir in list(incoming_root.iterdir()):
+            if not incoming_dir.is_dir():
+                continue
+            processed_dir = self.processed_root / incoming_dir.name
+            processed_dir.mkdir(parents=True, exist_ok=True)
+            for child in incoming_dir.iterdir():
+                target = processed_dir / child.name
+                if child.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    for nested in child.rglob("*"):
+                        nested_target = target / nested.relative_to(child)
+                        if nested.is_dir():
+                            nested_target.mkdir(parents=True, exist_ok=True)
+                        else:
+                            nested_target.parent.mkdir(parents=True, exist_ok=True)
+                            nested_target.write_bytes(nested.read_bytes())
+                else:
+                    target.write_bytes(child.read_bytes())
+            metadata = json.loads((processed_dir / "metadata.json").read_text(encoding="utf-8"))
+            reinterpretation = dict(metadata.get("reinterpretation") or {})
+            reinterpretation["status"] = "reprocessed"
+            metadata["reinterpretation"] = reinterpretation
+            (processed_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            (processed_dir / "normalized.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": incoming_dir.name,
+                        "asset": {
+                            "title": f"Reprocessed {incoming_dir.name}",
+                            "source_url": metadata["source_url"],
+                            "result": {
+                                "summary": {
+                                    "headline": metadata.get("requested_mode") or "auto",
+                                    "short_text": metadata.get("requested_domain_template") or "generic",
+                                },
+                            },
+                        },
+                        "metadata": {
+                            "reinterpretation": reinterpretation,
+                            "llm_processing": {
+                                "status": "pass",
+                                "requested_reading_goal": metadata.get("requested_reading_goal"),
+                                "requested_domain_template": metadata.get("requested_domain_template"),
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (processed_dir / "normalized.md").write_text("Reprocessed paragraph.", encoding="utf-8")
+            (processed_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+            for child in sorted(incoming_dir.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            incoming_dir.rmdir()
+        return "processed"
+
+
 class ResultWorkspaceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -131,6 +200,46 @@ class ResultWorkspaceTests(unittest.TestCase):
         self.assertEqual(structured_result.get("product_view"), product_view)
         self.assertEqual(result.details.get("product_view"), product_view)
 
+    def test_load_processed_job_result_keeps_insight_brief_as_fallback_when_no_product_view(self) -> None:
+        job_dir = self.shared_root / "processed" / "job-brief-only"
+        job_dir.mkdir()
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": "job-brief-only"}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-brief-only",
+                    "asset": {
+                        "title": "Fallback title",
+                        "result": {
+                            "summary": {
+                                "headline": "Fallback headline",
+                                "short_text": "Fallback summary.",
+                            },
+                            "key_points": [
+                                {
+                                    "id": "kp-1",
+                                    "title": "Fallback point",
+                                    "details": "Fallback details.",
+                                }
+                            ],
+                        },
+                    },
+                    "metadata": {"llm_processing": {"status": "pass"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        result = load_job_result(self.shared_root, "job-brief-only")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.details.get("product_view"), {})
+        brief = result.details.get("insight_brief")
+        self.assertIsNotNone(brief)
+        self.assertEqual(brief.hero.title, "Fallback headline")
+
     def test_load_processed_job_result_follows_active_version_pointer(self) -> None:
         base_dir = self.shared_root / "processed" / "job-123"
         reinterpret_dir = self.shared_root / "processed" / "job-123--reinterpret-01"
@@ -180,8 +289,59 @@ class ResultWorkspaceTests(unittest.TestCase):
     def test_reinterpret_result_creates_processed_version_and_updates_active_pointer(self) -> None:
         base_dir = self.shared_root / "processed" / "job-123"
         base_dir.mkdir()
+        (base_dir / "payload.html").write_text("<p>payload</p>", encoding="utf-8")
+        (base_dir / "attachments" / "source").mkdir(parents=True)
+        (base_dir / "attachments" / "source" / "note.txt").write_text("attachment", encoding="utf-8")
+        (base_dir / "capture_manifest.json").write_text(
+            json.dumps(
+                {
+                    "manifest_version": 1,
+                    "job_id": "job-123",
+                    "source_url": "https://example.com/article",
+                    "primary_payload": {
+                        "path": "payload.html",
+                        "role": "focused_capture",
+                        "media_type": "text/html",
+                        "content_type": "html",
+                        "size_bytes": 14,
+                        "is_primary": True,
+                    },
+                    "artifacts": [
+                        {
+                            "path": "payload.html",
+                            "role": "focused_capture",
+                            "media_type": "text/html",
+                            "content_type": "html",
+                            "size_bytes": 14,
+                            "is_primary": True,
+                        },
+                        {
+                            "path": "attachments/source/note.txt",
+                            "role": "source_note",
+                            "media_type": "text/plain",
+                            "size_bytes": 10,
+                            "is_primary": False,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         (base_dir / "metadata.json").write_text(
-            json.dumps({"job_id": "job-123", "source_url": "https://example.com/article"}),
+            json.dumps(
+                {
+                    "job_id": "job-123",
+                    "source_url": "https://example.com/article",
+                    "final_url": "https://example.com/final",
+                    "platform": "generic",
+                    "collector": "windows-client",
+                    "collected_at": "2026-04-06T10:00:00+00:00",
+                    "content_type": "html",
+                    "collection_mode": "http",
+                    "requested_mode": "auto",
+                    "capture_manifest_filename": "capture_manifest.json",
+                }
+            ),
             encoding="utf-8",
         )
         (base_dir / "normalized.json").write_text(
@@ -213,6 +373,7 @@ class ResultWorkspaceTests(unittest.TestCase):
             browser_collector=MagicMock(),
             exporter=MagicMock(),
         )
+        service.wsl_bridge = _FakeWslBridge(self.shared_root / "processed")
 
         result = service.reinterpret_result(
             ReinterpretRequest(
@@ -224,9 +385,11 @@ class ResultWorkspaceTests(unittest.TestCase):
         )
 
         reinterpret_dir = self.shared_root / "processed" / "job-123--reinterpret-01"
+        incoming_dir = self.shared_root / "incoming" / "job-123--reinterpret-01"
         self.assertEqual(result.job_id, "job-123--reinterpret-01")
         self.assertTrue(reinterpret_dir.exists())
-        self.assertEqual((reinterpret_dir / "normalized.md").read_text(encoding="utf-8"), "First paragraph.\n\nSecond paragraph.")
+        self.assertFalse(incoming_dir.exists())
+        self.assertEqual((reinterpret_dir / "normalized.md").read_text(encoding="utf-8"), "Reprocessed paragraph.")
         self.assertEqual(
             json.loads((base_dir / "active_version.json").read_text(encoding="utf-8")),
             {
@@ -237,7 +400,7 @@ class ResultWorkspaceTests(unittest.TestCase):
         normalized = json.loads((reinterpret_dir / "normalized.json").read_text(encoding="utf-8"))
         self.assertEqual(normalized["job_id"], "job-123--reinterpret-01")
         self.assertEqual(normalized["metadata"]["reinterpretation"], {
-            "status": "local_clone",
+            "status": "reprocessed",
             "source_job_id": "job-123",
             "source_version_job_id": "job-123",
             "requested_reading_goal": "guide",
@@ -247,13 +410,19 @@ class ResultWorkspaceTests(unittest.TestCase):
         self.assertIsNotNone(active_result)
         assert active_result is not None
         self.assertEqual(active_result.job_id, "job-123--reinterpret-01")
-        self.assertEqual(normalized["metadata"]["reinterpretation"]["status"], "local_clone")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["status"], "reprocessed")
         self.assertEqual(normalized["metadata"]["reinterpretation"]["source_job_id"], "job-123")
         self.assertEqual(normalized["metadata"]["reinterpretation"]["source_version_job_id"], "job-123")
         self.assertEqual(normalized["metadata"]["reinterpretation"]["requested_reading_goal"], "guide")
         self.assertEqual(normalized["metadata"]["reinterpretation"]["requested_domain_template"], "market-intel")
-        self.assertEqual(normalized["metadata"]["llm_processing"], {"status": "pass"})
-        self.assertNotIn("editorial", normalized["asset"]["result"])
+        self.assertEqual(
+            normalized["metadata"]["llm_processing"],
+            {
+                "status": "pass",
+                "requested_reading_goal": "guide",
+                "requested_domain_template": "market-intel",
+            },
+        )
 
     def test_list_recent_results_prefers_active_processed_version_and_hides_base_pointer_dir(self) -> None:
         base_dir = self.shared_root / "processed" / "job-family"
@@ -345,6 +514,36 @@ class ResultWorkspaceTests(unittest.TestCase):
         base_dir.mkdir()
         reinterpret_one_dir.mkdir()
         reinterpret_two_dir.mkdir()
+        for job_dir in (base_dir, reinterpret_one_dir, reinterpret_two_dir):
+            (job_dir / "payload.html").write_text(f"<p>{job_dir.name}</p>", encoding="utf-8")
+            (job_dir / "capture_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_version": 1,
+                        "job_id": job_dir.name,
+                        "source_url": "https://example.com/article",
+                        "primary_payload": {
+                            "path": "payload.html",
+                            "role": "focused_capture",
+                            "media_type": "text/html",
+                            "content_type": "html",
+                            "size_bytes": 21,
+                            "is_primary": True,
+                        },
+                        "artifacts": [
+                            {
+                                "path": "payload.html",
+                                "role": "focused_capture",
+                                "media_type": "text/html",
+                                "content_type": "html",
+                                "size_bytes": 21,
+                                "is_primary": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
         (base_dir / "active_version.json").write_text(
             json.dumps(
                 {
@@ -359,7 +558,19 @@ class ResultWorkspaceTests(unittest.TestCase):
             (reinterpret_one_dir, "job-123--reinterpret-01", "Version one title"),
             (reinterpret_two_dir, "job-123--reinterpret-02", "Version two title"),
         ):
-            (job_dir / "metadata.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+            (job_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "source_url": "https://example.com/article",
+                        "platform": "generic",
+                        "collector": "windows-client",
+                        "collected_at": "2026-04-06T10:00:00+00:00",
+                        "content_type": "html",
+                    }
+                ),
+                encoding="utf-8",
+            )
             (job_dir / "normalized.json").write_text(
                 json.dumps(
                     {
@@ -382,6 +593,7 @@ class ResultWorkspaceTests(unittest.TestCase):
             browser_collector=MagicMock(),
             exporter=MagicMock(),
         )
+        service.wsl_bridge = _FakeWslBridge(self.shared_root / "processed")
 
         result = service.reinterpret_result(
             ReinterpretRequest(
@@ -395,13 +607,97 @@ class ResultWorkspaceTests(unittest.TestCase):
         reinterpret_three_dir = self.shared_root / "processed" / "job-123--reinterpret-03"
         normalized = json.loads((reinterpret_three_dir / "normalized.json").read_text(encoding="utf-8"))
         self.assertEqual(result.job_id, "job-123--reinterpret-03")
-        self.assertEqual(normalized["asset"]["title"], "Version one title")
+        self.assertEqual(normalized["asset"]["title"], "Reprocessed job-123--reinterpret-03")
         self.assertEqual(normalized["metadata"]["reinterpretation"]["source_job_id"], "job-123")
         self.assertEqual(normalized["metadata"]["reinterpretation"]["source_version_job_id"], "job-123--reinterpret-01")
         self.assertEqual(
             json.loads((base_dir / "active_version.json").read_text(encoding="utf-8"))["active_job_id"],
             "job-123--reinterpret-03",
         )
+
+    def test_reinterpret_result_does_not_switch_active_version_when_rerun_output_is_missing(self) -> None:
+        base_dir = self.shared_root / "processed" / "job-123"
+        base_dir.mkdir()
+        (base_dir / "payload.html").write_text("<p>payload</p>", encoding="utf-8")
+        (base_dir / "capture_manifest.json").write_text(
+            json.dumps(
+                {
+                    "manifest_version": 1,
+                    "job_id": "job-123",
+                    "source_url": "https://example.com/article",
+                    "primary_payload": {
+                        "path": "payload.html",
+                        "role": "focused_capture",
+                        "media_type": "text/html",
+                        "content_type": "html",
+                        "size_bytes": 14,
+                        "is_primary": True,
+                    },
+                    "artifacts": [
+                        {
+                            "path": "payload.html",
+                            "role": "focused_capture",
+                            "media_type": "text/html",
+                            "content_type": "html",
+                            "size_bytes": 14,
+                            "is_primary": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (base_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-123",
+                    "source_url": "https://example.com/article",
+                    "collector": "windows-client",
+                    "collected_at": "2026-04-06T10:00:00+00:00",
+                    "content_type": "html",
+                    "platform": "generic",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (base_dir / "normalized.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-123",
+                    "asset": {
+                        "title": "Example title",
+                        "source_url": "https://example.com/article",
+                        "result": {"summary": {"headline": "Core takeaway", "short_text": "A concise structured summary."}},
+                    },
+                    "metadata": {"llm_processing": {"status": "pass"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (base_dir / "normalized.md").write_text("First paragraph.", encoding="utf-8")
+        (base_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        service = WindowsClientService(
+            settings=Settings(project_root=Path(self.temp_dir.name) / "project-root"),
+            mock_collector=MagicMock(),
+            url_collector=MagicMock(),
+            browser_collector=MagicMock(),
+            exporter=MagicMock(),
+        )
+        service.wsl_bridge = MagicMock()
+        service.wsl_bridge.watch_once.return_value = "processed"
+
+        with self.assertRaises(Exception):
+            service.reinterpret_result(
+                ReinterpretRequest(
+                    job_id="job-123",
+                    reading_goal="guide",
+                    domain_template="market-intel",
+                ),
+                shared_root=self.shared_root,
+            )
+
+        self.assertFalse((base_dir / "active_version.json").exists())
 
     def test_load_failed_job_result(self) -> None:
         job_dir = self.shared_root / "failed" / "job-456"

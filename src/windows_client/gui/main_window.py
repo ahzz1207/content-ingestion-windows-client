@@ -41,6 +41,7 @@ from windows_client.gui.inline_result_view import InlineResultView
 from windows_client.gui.platform_router import PlatformRoute, resolve_platform_route
 from windows_client.gui.refresh_policy import RefreshGate
 from windows_client.gui.result_renderer import (  # re-exported for test compatibility
+    UI_FONT_STACK,
     _preview_html,
     _structured_result_payload,
 )
@@ -621,22 +622,20 @@ class MainWindow(QMainWindow):
                     stop: 0.48 #eef1f4,
                     stop: 1 #e4e8ee
                 );
+                font-family: __UI_FONT_STACK__;
                 color: #16202b;
             }
             #WindowTitle {
-                font-family: Georgia, 'Times New Roman', serif;
                 font-size: 38px;
                 font-weight: 700;
                 color: #16202b;
             }
             #HeroText {
-                font-family: Georgia, 'Times New Roman', serif;
                 font-size: 36px;
                 font-weight: 600;
                 color: #16202b;
             }
             #ResultTitle {
-                font-family: Georgia, 'Times New Roman', serif;
                 font-size: 31px;
                 font-weight: 600;
                 color: #16202b;
@@ -859,6 +858,7 @@ class MainWindow(QMainWindow):
                 background: rgba(255, 251, 247, 0.92);
                 padding: 20px;
                 font-size: 16px;
+                line-height: 1.85;
                 color: #233445;
                 selection-background-color: rgba(163, 75, 45, 0.16);
             }
@@ -870,6 +870,7 @@ class MainWindow(QMainWindow):
                 color: #334155;
             }
             """
+            .replace("__UI_FONT_STACK__", UI_FONT_STACK)
         )
 
     def _set_pills(self, pills: list[tuple[str, bool]]) -> None:
