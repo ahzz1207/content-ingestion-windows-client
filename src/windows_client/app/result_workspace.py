@@ -41,7 +41,7 @@ class ResultWorkspaceEntry:
 
 
 def load_job_result(shared_root: Path, job_id: str) -> ResultWorkspaceEntry | None:
-    processed_dir = shared_root / "processed" / job_id
+    processed_dir = _resolve_processed_job_dir(shared_root, job_id)
     if processed_dir.exists():
         return _load_processed_result(processed_dir)
 
@@ -64,6 +64,24 @@ def load_job_result(shared_root: Path, job_id: str) -> ResultWorkspaceEntry | No
     return None
 
 
+def _resolve_processed_job_dir(shared_root: Path, job_id: str) -> Path:
+    processed_dir = shared_root / "processed" / job_id
+    active_version_path = processed_dir / "active_version.json"
+    if not active_version_path.exists():
+        return processed_dir
+    try:
+        active_version = _read_json_file(active_version_path)
+    except Exception:
+        return processed_dir
+    active_job_id = _coerce_str(active_version.get("active_job_id"))
+    if not active_job_id:
+        return processed_dir
+    active_dir = shared_root / "processed" / active_job_id
+    if active_dir.exists():
+        return active_dir
+    return processed_dir
+
+
 def load_latest_result(shared_root: Path) -> ResultWorkspaceEntry | None:
     results = list_recent_results(shared_root, limit=1)
     if not results:
@@ -81,8 +99,9 @@ def list_recent_results(shared_root: Path, *, limit: int = 20) -> list[ResultWor
     )
     candidates = [path for path in candidates if path.is_dir()]
     candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    processed_candidates = _dedupe_processed_candidates(shared_root, candidates)
     results: list[ResultWorkspaceEntry] = []
-    for job_dir in candidates[:limit]:
+    for job_dir in processed_candidates:
         try:
             if job_dir.parent.name == "processed":
                 results.append(_load_processed_result(job_dir))
@@ -96,7 +115,25 @@ def list_recent_results(shared_root: Path, *, limit: int = 20) -> list[ResultWor
                 results.append(_load_pending_result(job_dir))
         except Exception:
             continue
+        if len(results) >= limit:
+            break
     return results
+
+
+def _dedupe_processed_candidates(shared_root: Path, candidates: list[Path]) -> list[Path]:
+    deduped: list[Path] = []
+    seen_processed_job_ids: set[str] = set()
+    for job_dir in candidates:
+        if job_dir.parent.name != "processed":
+            deduped.append(job_dir)
+            continue
+        resolved_dir = _resolve_processed_job_dir(shared_root, job_dir.name)
+        resolved_job_id = resolved_dir.name
+        if resolved_job_id in seen_processed_job_ids:
+            continue
+        seen_processed_job_ids.add(resolved_job_id)
+        deduped.append(resolved_dir)
+    return deduped
 
 
 def _load_processed_result(job_dir: Path) -> ResultWorkspaceEntry:

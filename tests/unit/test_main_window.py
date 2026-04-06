@@ -11,6 +11,7 @@ if str(SRC_DIR) not in sys.path:
 
 from PySide6.QtWidgets import QApplication
 
+from windows_client.app.service import ReinterpretRequest
 from windows_client.app.view_models import DoctorSnapshot, JobExportSnapshot, OperationViewState
 from windows_client.gui.main_window import ANALYSIS_MODE_OPTIONS, MainWindow, _normalize_url, _preview_html
 
@@ -288,6 +289,83 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window.analysis_mode_combo.currentData(), "auto")
 
+    def test_start_reinterpretation_uses_service_request_and_loads_new_entry(self) -> None:
+        entry = _processed_entry("job-123--reinterpret-01")
+        self.window._latest_result_entry = entry
+
+        class _Signal:
+            def connect(self, callback):
+                self.callback = callback
+
+        class _FakeThread:
+            def __init__(self, task):
+                self.task = task
+                self.progress_changed = _Signal()
+                self.completed = _Signal()
+                self.crashed = _Signal()
+
+            def start(self) -> None:
+                result = self.task(lambda stage: None)
+                self.completed.callback(result)
+
+            def isRunning(self) -> bool:
+                return False
+
+        with patch("windows_client.gui.main_window.WorkflowTaskThread", _FakeThread):
+            self.window._start_reinterpretation(
+                ReinterpretRequest(
+                    job_id="job-123",
+                    reading_goal="guide",
+                    domain_template="market-intel",
+                )
+            )
+
+        self.assertEqual(self.workflow.service.reinterpret_calls, [
+            {
+                "job_id": "job-123",
+                "reading_goal": "guide",
+                "domain_template": "market-intel",
+            }
+        ])
+        self.assertEqual(self.window._latest_result_entry.job_id, "job-123--reinterpret-01")
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+
+    def test_start_reinterpretation_preserves_selected_version_job_id(self) -> None:
+        self.window._latest_result_entry = _processed_entry("job-123--reinterpret-02")
+
+        class _Signal:
+            def connect(self, callback):
+                self.callback = callback
+
+        class _FakeThread:
+            def __init__(self, task):
+                self.task = task
+                self.progress_changed = _Signal()
+                self.completed = _Signal()
+                self.crashed = _Signal()
+
+            def start(self) -> None:
+                result = self.task(lambda stage: None)
+                self.completed.callback(result)
+
+            def isRunning(self) -> bool:
+                return False
+
+        with patch("windows_client.gui.main_window.WorkflowTaskThread", _FakeThread):
+            self.window._start_reinterpretation(
+                ReinterpretRequest(
+                    job_id=self.window._latest_result_entry.job_id,
+                    reading_goal="review",
+                    domain_template="briefing",
+                )
+            )
+
+        self.assertEqual(self.workflow.service.reinterpret_calls[-1], {
+            "job_id": "job-123--reinterpret-02",
+            "reading_goal": "review",
+            "domain_template": "briefing",
+        })
+
 
 class NormalizeUrlTests(unittest.TestCase):
     def test_wechat_strips_tracking_params(self) -> None:
@@ -373,6 +451,17 @@ class _FakeWorkflow:
 class _FakeService:
     def __init__(self, shared_root: Path) -> None:
         self.settings = _FakeSettings(shared_root)
+        self.reinterpret_calls: list[dict[str, str]] = []
+
+    def reinterpret_result(self, request: ReinterpretRequest, *, shared_root: Path | None = None):
+        self.reinterpret_calls.append(
+            {
+                "job_id": request.job_id,
+                "reading_goal": request.reading_goal,
+                "domain_template": request.domain_template,
+            }
+        )
+        return _processed_entry("job-123--reinterpret-01")
 
 
 class _FakeSettings:

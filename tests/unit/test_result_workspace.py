@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -10,6 +11,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from windows_client.app.result_workspace import _looks_unreadable_text, list_recent_results, load_job_result, load_latest_result
+from windows_client.app.service import ReinterpretRequest, WindowsClientService
+from windows_client.config.settings import Settings
 
 
 class ResultWorkspaceTests(unittest.TestCase):
@@ -127,6 +130,278 @@ class ResultWorkspaceTests(unittest.TestCase):
         structured_result = result.details.get("structured_result", {})
         self.assertEqual(structured_result.get("product_view"), product_view)
         self.assertEqual(result.details.get("product_view"), product_view)
+
+    def test_load_processed_job_result_follows_active_version_pointer(self) -> None:
+        base_dir = self.shared_root / "processed" / "job-123"
+        reinterpret_dir = self.shared_root / "processed" / "job-123--reinterpret-01"
+        base_dir.mkdir()
+        reinterpret_dir.mkdir()
+        (base_dir / "active_version.json").write_text(
+            json.dumps(
+                {
+                    "active_job_id": "job-123--reinterpret-01",
+                    "version_ids": ["job-123", "job-123--reinterpret-01"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        for job_dir, job_id, title in (
+            (base_dir, "job-123", "Base title"),
+            (reinterpret_dir, "job-123--reinterpret-01", "Reinterpreted title"),
+        ):
+            (job_dir / "metadata.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+            (job_dir / "normalized.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "asset": {
+                            "title": title,
+                            "result": {
+                                "summary": {
+                                    "headline": title,
+                                    "short_text": "Summary text.",
+                                }
+                            },
+                        },
+                        "metadata": {"llm_processing": {"status": "pass"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        result = load_job_result(self.shared_root, "job-123")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.job_id, "job-123--reinterpret-01")
+        self.assertEqual(result.title, "Reinterpreted title")
+
+    def test_reinterpret_result_creates_processed_version_and_updates_active_pointer(self) -> None:
+        base_dir = self.shared_root / "processed" / "job-123"
+        base_dir.mkdir()
+        (base_dir / "metadata.json").write_text(
+            json.dumps({"job_id": "job-123", "source_url": "https://example.com/article"}),
+            encoding="utf-8",
+        )
+        (base_dir / "normalized.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "job-123",
+                    "asset": {
+                        "title": "Example title",
+                        "source_url": "https://example.com/article",
+                        "result": {
+                            "summary": {
+                                "headline": "Core takeaway",
+                                "short_text": "A concise structured summary.",
+                            }
+                        },
+                    },
+                    "metadata": {"llm_processing": {"status": "pass"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (base_dir / "normalized.md").write_text("First paragraph.\n\nSecond paragraph.", encoding="utf-8")
+        (base_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        service = WindowsClientService(
+            settings=Settings(project_root=Path(self.temp_dir.name) / "project-root"),
+            mock_collector=MagicMock(),
+            url_collector=MagicMock(),
+            browser_collector=MagicMock(),
+            exporter=MagicMock(),
+        )
+
+        result = service.reinterpret_result(
+            ReinterpretRequest(
+                job_id="job-123",
+                reading_goal="guide",
+                domain_template="market-intel",
+            ),
+            shared_root=self.shared_root,
+        )
+
+        reinterpret_dir = self.shared_root / "processed" / "job-123--reinterpret-01"
+        self.assertEqual(result.job_id, "job-123--reinterpret-01")
+        self.assertTrue(reinterpret_dir.exists())
+        self.assertEqual((reinterpret_dir / "normalized.md").read_text(encoding="utf-8"), "First paragraph.\n\nSecond paragraph.")
+        self.assertEqual(
+            json.loads((base_dir / "active_version.json").read_text(encoding="utf-8")),
+            {
+                "active_job_id": "job-123--reinterpret-01",
+                "version_ids": ["job-123", "job-123--reinterpret-01"],
+            },
+        )
+        normalized = json.loads((reinterpret_dir / "normalized.json").read_text(encoding="utf-8"))
+        self.assertEqual(normalized["job_id"], "job-123--reinterpret-01")
+        self.assertEqual(normalized["metadata"]["reinterpretation"], {
+            "status": "local_clone",
+            "source_job_id": "job-123",
+            "source_version_job_id": "job-123",
+            "requested_reading_goal": "guide",
+            "requested_domain_template": "market-intel",
+        })
+        active_result = load_job_result(self.shared_root, "job-123")
+        self.assertIsNotNone(active_result)
+        assert active_result is not None
+        self.assertEqual(active_result.job_id, "job-123--reinterpret-01")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["status"], "local_clone")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["source_job_id"], "job-123")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["source_version_job_id"], "job-123")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["requested_reading_goal"], "guide")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["requested_domain_template"], "market-intel")
+        self.assertEqual(normalized["metadata"]["llm_processing"], {"status": "pass"})
+        self.assertNotIn("editorial", normalized["asset"]["result"])
+
+    def test_list_recent_results_prefers_active_processed_version_and_hides_base_pointer_dir(self) -> None:
+        base_dir = self.shared_root / "processed" / "job-family"
+        active_dir = self.shared_root / "processed" / "job-family--reinterpret-01"
+        base_dir.mkdir()
+        active_dir.mkdir()
+        (base_dir / "active_version.json").write_text(
+            json.dumps(
+                {
+                    "active_job_id": "job-family--reinterpret-01",
+                    "version_ids": ["job-family", "job-family--reinterpret-01"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        for job_dir, job_id, title in (
+            (base_dir, "job-family", "Base"),
+            (active_dir, "job-family--reinterpret-01", "Active"),
+        ):
+            (job_dir / "metadata.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+            (job_dir / "normalized.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "asset": {"title": title, "result": {"summary": {"headline": title, "short_text": "summary"}}},
+                        "metadata": {"llm_processing": {"status": "pass"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        results = list_recent_results(self.shared_root, limit=10)
+
+        processed_job_ids = [result.job_id for result in results if result.state == "processed"]
+        self.assertEqual(processed_job_ids, ["job-family--reinterpret-01"])
+
+    def test_load_latest_result_uses_active_processed_version_timestamp(self) -> None:
+        base_dir = self.shared_root / "processed" / "job-family"
+        active_dir = self.shared_root / "processed" / "job-family--reinterpret-01"
+        failed_dir = self.shared_root / "failed" / "job-failed"
+        base_dir.mkdir()
+        active_dir.mkdir()
+        failed_dir.mkdir()
+        (base_dir / "active_version.json").write_text(
+            json.dumps(
+                {
+                    "active_job_id": "job-family--reinterpret-01",
+                    "version_ids": ["job-family", "job-family--reinterpret-01"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        for job_dir, job_id, title in (
+            (base_dir, "job-family", "Base"),
+            (active_dir, "job-family--reinterpret-01", "Active"),
+        ):
+            (job_dir / "metadata.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+            (job_dir / "normalized.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "asset": {"title": title, "result": {"summary": {"headline": title, "short_text": "summary"}}},
+                        "metadata": {"llm_processing": {"status": "pass"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+        (failed_dir / "metadata.json").write_text(json.dumps({"job_id": "job-failed"}), encoding="utf-8")
+        (failed_dir / "error.json").write_text(json.dumps({"error_message": "failed"}), encoding="utf-8")
+        (failed_dir / "status.json").write_text(json.dumps({"status": "failed"}), encoding="utf-8")
+
+        os = __import__("os")
+        os.utime(base_dir, (100, 100))
+        os.utime(active_dir, (300, 300))
+        os.utime(failed_dir, (200, 200))
+
+        result = load_latest_result(self.shared_root)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.job_id, "job-family--reinterpret-01")
+
+    def test_reinterpret_result_from_selected_version_clones_that_version_not_current_active(self) -> None:
+        base_dir = self.shared_root / "processed" / "job-123"
+        reinterpret_one_dir = self.shared_root / "processed" / "job-123--reinterpret-01"
+        reinterpret_two_dir = self.shared_root / "processed" / "job-123--reinterpret-02"
+        base_dir.mkdir()
+        reinterpret_one_dir.mkdir()
+        reinterpret_two_dir.mkdir()
+        (base_dir / "active_version.json").write_text(
+            json.dumps(
+                {
+                    "active_job_id": "job-123--reinterpret-02",
+                    "version_ids": ["job-123", "job-123--reinterpret-01", "job-123--reinterpret-02"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        for job_dir, job_id, title in (
+            (base_dir, "job-123", "Base title"),
+            (reinterpret_one_dir, "job-123--reinterpret-01", "Version one title"),
+            (reinterpret_two_dir, "job-123--reinterpret-02", "Version two title"),
+        ):
+            (job_dir / "metadata.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+            (job_dir / "normalized.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "asset": {
+                            "title": title,
+                            "result": {"summary": {"headline": title, "short_text": "summary"}},
+                        },
+                        "metadata": {"llm_processing": {"status": "pass"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        service = WindowsClientService(
+            settings=Settings(project_root=Path(self.temp_dir.name) / "project-root"),
+            mock_collector=MagicMock(),
+            url_collector=MagicMock(),
+            browser_collector=MagicMock(),
+            exporter=MagicMock(),
+        )
+
+        result = service.reinterpret_result(
+            ReinterpretRequest(
+                job_id="job-123--reinterpret-01",
+                reading_goal="review",
+                domain_template="briefing",
+            ),
+            shared_root=self.shared_root,
+        )
+
+        reinterpret_three_dir = self.shared_root / "processed" / "job-123--reinterpret-03"
+        normalized = json.loads((reinterpret_three_dir / "normalized.json").read_text(encoding="utf-8"))
+        self.assertEqual(result.job_id, "job-123--reinterpret-03")
+        self.assertEqual(normalized["asset"]["title"], "Version one title")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["source_job_id"], "job-123")
+        self.assertEqual(normalized["metadata"]["reinterpretation"]["source_version_job_id"], "job-123--reinterpret-01")
+        self.assertEqual(
+            json.loads((base_dir / "active_version.json").read_text(encoding="utf-8"))["active_job_id"],
+            "job-123--reinterpret-03",
+        )
 
     def test_load_failed_job_result(self) -> None:
         job_dir = self.shared_root / "failed" / "job-456"

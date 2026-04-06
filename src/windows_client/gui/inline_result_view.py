@@ -36,6 +36,7 @@ class InlineResultView(QWidget):
     """Full-window widget that renders an InsightBriefV2 as the main content."""
 
     reanalyze_requested = Signal(str)  # emits source_url
+    reinterpret_requested = Signal()
 
     def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -54,10 +55,15 @@ class InlineResultView(QWidget):
         self._reanalyze_btn.setObjectName("GhostButton")
         self._reanalyze_btn.clicked.connect(self._on_reanalyze)
         self._reanalyze_btn.setEnabled(False)
+        self._reinterpret_btn = QPushButton("Re-interpret as...")
+        self._reinterpret_btn.setObjectName("GhostButton")
+        self._reinterpret_btn.clicked.connect(self.reinterpret_requested.emit)
+        self._reinterpret_btn.setEnabled(False)
         self._history_btn = QPushButton("历史记录")
         self._history_btn.setObjectName("GhostButton")
         top_bar.addWidget(self._new_url_button, 0, Qt.AlignLeft)
         top_bar.addWidget(self._reanalyze_btn, 0, Qt.AlignLeft)
+        top_bar.addWidget(self._reinterpret_btn, 0, Qt.AlignLeft)
         top_bar.addWidget(self._history_btn, 0, Qt.AlignLeft)
         top_bar.addStretch(1)
         root.addLayout(top_bar)
@@ -300,6 +306,7 @@ class InlineResultView(QWidget):
         else:
             self._hero_source.hide()
         self._reanalyze_btn.setEnabled(bool(source))
+        self._reinterpret_btn.setEnabled(entry.state == "processed")
 
         if brief is not None:
             # Full view

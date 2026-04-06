@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
+from windows_client.app.service import ReinterpretRequest
 from windows_client.app.view_models import OperationViewState
 from windows_client.app.workflow import WindowsClientWorkflow
 from windows_client.app.wsl_bridge import WslBridge
@@ -139,6 +140,24 @@ def _resolved_mode_from_entry(entry: ResultWorkspaceEntry) -> str | None:
         return None
     value = str(llm_processing.get("resolved_mode") or "").strip().lower()
     return value or None
+
+
+def _resolved_domain_template_from_entry(entry: ResultWorkspaceEntry) -> str:
+    normalized = entry.details.get("normalized")
+    if not isinstance(normalized, dict):
+        return ""
+    metadata = normalized.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    reinterpretation = metadata.get("reinterpretation")
+    if not isinstance(reinterpretation, dict):
+        return ""
+    value = str(
+        reinterpretation.get("requested_domain_template")
+        or reinterpretation.get("domain_template")
+        or ""
+    ).strip()
+    return value
 
 
 def _format_updated_at(timestamp: float) -> str:
@@ -272,6 +291,59 @@ class LoginPromptDialog(QDialog):
         self._worker = None
 
 
+class ReinterpretDialog(QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        initial_reading_goal: str,
+        initial_domain_template: str,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Re-interpret as...")
+        self.setModal(True)
+        self.resize(420, 220)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        layout.addWidget(QLabel("Reading goal"))
+        self.reading_goal_combo = QComboBox()
+        for label, value in ANALYSIS_MODE_OPTIONS:
+            if value == "auto":
+                continue
+            self.reading_goal_combo.addItem(label, value)
+        selected_index = max(self.reading_goal_combo.findData(initial_reading_goal), 0)
+        self.reading_goal_combo.setCurrentIndex(selected_index)
+        layout.addWidget(self.reading_goal_combo)
+
+        layout.addWidget(QLabel("Domain template override"))
+        self.domain_template_input = QLineEdit()
+        self.domain_template_input.setPlaceholderText("market-intel")
+        self.domain_template_input.setText(initial_domain_template)
+        layout.addWidget(self.domain_template_input)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        cancel_button = QPushButton("Cancel")
+        run_button = QPushButton("Create Reinterpretation")
+        run_button.setObjectName("PrimaryButton")
+        cancel_button.clicked.connect(self.reject)
+        run_button.clicked.connect(self.accept)
+        actions.addWidget(cancel_button)
+        actions.addWidget(run_button)
+        layout.addStretch(1)
+        layout.addLayout(actions)
+
+    def build_request(self, *, job_id: str) -> ReinterpretRequest:
+        return ReinterpretRequest(
+            job_id=job_id,
+            reading_goal=str(self.reading_goal_combo.currentData() or "argument"),
+            domain_template=self.domain_template_input.text().strip(),
+        )
+
+
 
 
 class MainWindow(QMainWindow):
@@ -345,6 +417,7 @@ class MainWindow(QMainWindow):
         self.result_inline = InlineResultView(parent=self)
         self.result_inline.new_url_button.clicked.connect(self._reset_to_ready_state)
         self.result_inline.reanalyze_requested.connect(self._reanalyze_url)
+        self.result_inline.reinterpret_requested.connect(self._prompt_reinterpretation)
         self.result_inline.history_button.clicked.connect(self._open_history_from_result)
         self.stack.addWidget(self.ready_page)
         self.stack.addWidget(self.task_page)
@@ -1122,6 +1195,41 @@ class MainWindow(QMainWindow):
     def _reanalyze_url(self, url: str) -> None:
         self.url_input.setText(url)
         self._start_from_input()
+
+    def _prompt_reinterpretation(self) -> None:
+        entry = self._latest_result_entry
+        if entry is None:
+            return
+        dialog = ReinterpretDialog(
+            parent=self,
+            initial_reading_goal=_resolved_mode_from_entry(entry) or "argument",
+            initial_domain_template=_resolved_domain_template_from_entry(entry),
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self._start_reinterpretation(dialog.build_request(job_id=entry.job_id))
+
+    def _start_reinterpretation(self, request: ReinterpretRequest) -> None:
+        if self._task_thread is not None and self._task_thread.isRunning():
+            return
+        self.footer_label.setText("Creating reinterpretation...")
+        shared_root = self.workflow.service.settings.effective_shared_inbox_root
+        self._task_thread = WorkflowTaskThread(
+            lambda progress: self.workflow.service.reinterpret_result(request, shared_root=shared_root)
+        )
+        self._task_thread.completed.connect(self._on_reinterpretation_completed)
+        self._task_thread.crashed.connect(self._on_reinterpretation_crashed)
+        self._task_thread.start()
+
+    def _on_reinterpretation_completed(self, entry: ResultWorkspaceEntry) -> None:
+        self._task_thread = None
+        self.footer_label.setText("Reinterpretation ready.")
+        self._load_entry_into_result_view(entry)
+
+    def _on_reinterpretation_crashed(self, message: str) -> None:
+        self._task_thread = None
+        self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
+        QMessageBox.warning(self, "Reinterpretation failed", message)
 
     def _toggle_details(self, visible: bool) -> None:
         self.details_toggle.setText("Hide technical details" if visible else "Show technical details")
