@@ -85,6 +85,7 @@ def _product_view_entry() -> object:
                     "summary": {"headline": "Legacy headline", "short_text": "Legacy summary."},
                     "key_points": [{"title": "Legacy point", "details": "Legacy detail"}],
                     "product_view": {
+                        "layout": "review_curation",
                         "hero": {
                             "title": "Product hero",
                             "dek": "Product dek",
@@ -121,6 +122,7 @@ def _product_view_only_entry() -> object:
             "asset": {
                 "result": {
                     "product_view": {
+                        "layout": "narrative_digest",
                         "hero": {
                             "title": "Product-only hero",
                             "dek": "Product-only dek",
@@ -154,6 +156,7 @@ def _argument_product_view_entry() -> object:
             "asset": {
                 "result": {
                     "product_view": {
+                        "layout": "review_curation",
                         "hero": {
                             "title": "Policy claim is plausible but operationally weak",
                             "dek": "The article makes a case for direction, not for delivery readiness.",
@@ -210,6 +213,7 @@ def _guide_product_view_entry() -> object:
             "asset": {
                 "result": {
                     "product_view": {
+                        "layout": "narrative_digest",
                         "hero": {
                             "title": "一句话先看完",
                             "dek": "保留最关键的结论即可。",
@@ -246,6 +250,102 @@ def _guide_product_view_entry() -> object:
                 }
             },
             "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "guide"}},
+        }
+    }
+    return entry
+
+
+def _review_product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "layout": "review_curation",
+                        "hero": {
+                            "title": "值得一读，但更适合已经在跟这个主题的人",
+                            "dek": "亮点明确，但不是面向所有人的通用入门。",
+                        },
+                        "sections": [
+                            {
+                                "id": "highlights",
+                                "title": "Highlights",
+                                "kind": "highlights",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["亮点 A", "亮点 B"]}],
+                            },
+                            {
+                                "id": "audience",
+                                "title": "Who it's for",
+                                "kind": "audience",
+                                "priority": 2,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "paragraph", "text": "适合已经在看这个板块的人。"}],
+                            },
+                            {
+                                "id": "reservations",
+                                "title": "Reservations",
+                                "kind": "reservations",
+                                "priority": 3,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["保留点 A"]}],
+                            },
+                        ],
+                        "render_hints": {"layout_family": "review_curation"},
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "review"}},
+        }
+    }
+    return entry
+
+
+def _narrative_product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "layout": "narrative_digest",
+                        "hero": {
+                            "title": "一段逐步失去确定感、又重新组织自我的经历",
+                            "dek": "重点不在结论，而在叙事如何推进。",
+                        },
+                        "sections": [
+                            {
+                                "id": "beats",
+                                "title": "Story beats",
+                                "kind": "story_beats",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["起点", "转折", "收束"]}],
+                            },
+                            {
+                                "id": "themes",
+                                "title": "Themes",
+                                "kind": "themes",
+                                "priority": 2,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["主题 A", "主题 B"]}],
+                            },
+                            {
+                                "id": "takeaway",
+                                "title": "Takeaway",
+                                "kind": "takeaway",
+                                "priority": 3,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "paragraph", "text": "最后留下的是一条更个人化的结论。"}],
+                            },
+                        ],
+                        "render_hints": {"layout_family": "narrative_digest"},
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "narrative"}},
         }
     }
     return entry
@@ -379,6 +479,32 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
         self.assertIn("核心要点", html)
         self.assertIn("记住这件事", html)
         self.assertNotIn("关键论据", html)
+
+    def test_review_product_view_renders_as_curated_recommendation_layout(self) -> None:
+        entry = _review_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="review")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("review-curation-layout", html)
+        self.assertIn("review-curation-hero", html)
+        self.assertIn("Highlights", html)
+        self.assertIn("Who it&#x27;s for", html)
+        self.assertIn("Reservations", html)
+
+    def test_narrative_product_view_renders_as_story_shaped_layout(self) -> None:
+        entry = _narrative_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="narrative")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("narrative-digest-layout", html)
+        self.assertIn("narrative-digest-hero", html)
+        self.assertIn("Story beats", html)
+        self.assertIn("Themes", html)
+        self.assertIn("Takeaway", html)
 
 
 class TestResolvedEvidenceHtmlUsesAllRefs(unittest.TestCase):

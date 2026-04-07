@@ -70,6 +70,84 @@ class InlineResultViewTests(unittest.TestCase):
         self.assertFalse(view._mode_chip.isHidden())
         self.assertEqual(view._mode_chip.text(), "实用提炼")
 
+    def test_product_view_hides_duplicate_hero_take_when_same_as_title(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.details = {
+            "normalized": {
+                "asset": {
+                    "result": {
+                        "product_view": {
+                            "hero": {
+                                "title": "同一段摘要文本",
+                                "dek": "同一段摘要文本",
+                            },
+                            "sections": [
+                                {
+                                    "id": "s1",
+                                    "title": "Section",
+                                    "priority": 1,
+                                    "blocks": [{"type": "paragraph", "text": "Body"}],
+                                }
+                            ],
+                        }
+                    }
+                },
+                "metadata": {
+                    "llm_processing": {
+                        "status": "pass",
+                        "resolved_mode": "argument",
+                        "resolved_domain_template": "macro_business",
+                    }
+                },
+            }
+        }
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertEqual(view._hero_title.text(), "同一段摘要文本")
+        self.assertTrue(view._hero_take.isHidden())
+
+    def test_product_view_shows_mode_and_domain_chips_in_hero_area(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.details = {
+            "normalized": {
+                "asset": {
+                    "result": {
+                        "product_view": {
+                            "hero": {
+                                "title": "标题",
+                                "dek": "不同的短摘要",
+                            },
+                            "sections": [
+                                {
+                                    "id": "s1",
+                                    "title": "Section",
+                                    "priority": 1,
+                                    "blocks": [{"type": "paragraph", "text": "Body"}],
+                                }
+                            ],
+                        }
+                    }
+                },
+                "metadata": {
+                    "llm_processing": {
+                        "status": "pass",
+                        "resolved_mode": "guide",
+                        "resolved_domain_template": "macro_business",
+                    }
+                },
+            }
+        }
+
+        view.load_entry(entry, brief=None, resolved_mode="guide")
+
+        self.assertFalse(view._hero_tags_row.isHidden())
+        self.assertEqual(view._mode_chip.text(), "实用提炼")
+        self.assertFalse(view._content_kind_chip.isHidden())
+        self.assertEqual(view._content_kind_chip.text(), "宏观商业")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,15 +21,15 @@ class PlatformRouterTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_wechat_route_defaults_to_direct_capture(self) -> None:
+    def test_wechat_route_uses_browser_profile(self) -> None:
         route = resolve_platform_route("https://mp.weixin.qq.com/s/demo")
 
         self.assertEqual(route.platform, "wechat")
-        self.assertEqual(route.strategy, "http")
-        self.assertIsNone(route.start_url)
-        self.assertIsNone(route.profile_slug)
+        self.assertEqual(route.strategy, "browser")
+        self.assertEqual(route.start_url, "https://mp.weixin.qq.com/")
+        self.assertEqual(route.profile_slug, "wechat")
         self.assertEqual(route.wait_for_selector, "#js_content")
-        self.assertIsNone(route.profile_dir(self.settings))
+        self.assertEqual(route.profile_dir(self.settings), self.settings.browser_profiles_dir / "wechat")
 
     def test_generic_route_uses_http(self) -> None:
         route = resolve_platform_route("https://example.com/article")

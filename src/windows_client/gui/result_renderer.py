@@ -325,6 +325,46 @@ PREVIEW_STYLESHEET = """
 .guide-digest-layout {
     display: block;
 }
+.review-curation-layout {
+    display: block;
+}
+.review-curation-hero {
+    padding: 18px 20px;
+    background: rgba(124, 58, 237, 0.06);
+    border: 1px solid rgba(124, 58, 237, 0.14);
+    border-radius: 18px;
+    margin: 0 0 18px 0;
+}
+.review-curation-label {
+    display: inline-block;
+    margin: 0 0 8px 0;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(124, 58, 237, 0.10);
+    color: #6d28d9;
+    font-size: 11px;
+    font-weight: 700;
+}
+.narrative-digest-layout {
+    display: block;
+}
+.narrative-digest-hero {
+    padding: 20px 22px;
+    background: rgba(219, 39, 119, 0.05);
+    border: 1px solid rgba(219, 39, 119, 0.12);
+    border-radius: 20px;
+    margin: 0 0 18px 0;
+}
+.narrative-section-label {
+    display: inline-block;
+    margin: 0 0 8px 0;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(219, 39, 119, 0.10);
+    color: #be185d;
+    font-size: 11px;
+    font-weight: 700;
+}
 .guide-compact-hero {
     padding: 14px 16px;
     background: rgba(14, 116, 144, 0.06);
@@ -581,6 +621,10 @@ def _product_view_html(product_view: dict[str, object]) -> str:
             return _analysis_product_view_html(product_view)
         if layout == "practical_guide" or {"one_line_summary", "core_takeaways"}.issubset(section_kinds):
             return _guide_product_view_html(product_view)
+        if layout == "review_curation":
+            return _review_product_view_html(product_view)
+        if layout == "narrative_digest":
+            return _narrative_product_view_html(product_view)
 
     sections: list[str] = []
 
@@ -696,6 +740,64 @@ def _guide_product_view_html(product_view: dict[str, object]) -> str:
             parts.append(
                 "<section class='result-section'>"
                 f"<div class='guide-section-label'>{html.escape(title)}</div>"
+                f"{blocks_html}"
+                "</section>"
+            )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _review_product_view_html(product_view: dict[str, object]) -> str:
+    parts: list[str] = ["<div class='review-curation-layout'>"]
+    hero = product_view.get("hero")
+    if isinstance(hero, dict):
+        title = str(hero.get("title") or "").strip()
+        dek = str(hero.get("dek") or "").strip()
+        hero_bits = ["<div class='review-curation-label'>推荐导览</div>", f"<h2>{html.escape(title or '推荐导览')}</h2>"]
+        if dek:
+            hero_bits.append(f"<p>{html.escape(dek)}</p>")
+        parts.append(f"<section class='review-curation-hero'>{''.join(hero_bits)}</section>")
+
+    raw_sections = product_view.get("sections")
+    if isinstance(raw_sections, list):
+        sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: int(item.get("priority") or 0))
+        for item in sorted_sections:
+            title = str(item.get("title") or "").strip()
+            blocks_html = _product_view_blocks_html(item.get("blocks"))
+            if not blocks_html:
+                continue
+            parts.append(
+                "<section class='result-section'>"
+                f"<div class='review-curation-label'>{html.escape(title)}</div>"
+                f"{blocks_html}"
+                "</section>"
+            )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _narrative_product_view_html(product_view: dict[str, object]) -> str:
+    parts: list[str] = ["<div class='narrative-digest-layout'>"]
+    hero = product_view.get("hero")
+    if isinstance(hero, dict):
+        title = str(hero.get("title") or "").strip()
+        dek = str(hero.get("dek") or "").strip()
+        hero_bits = ["<div class='narrative-section-label'>叙事导读</div>", f"<h2>{html.escape(title or '叙事导读')}</h2>"]
+        if dek:
+            hero_bits.append(f"<p>{html.escape(dek)}</p>")
+        parts.append(f"<section class='narrative-digest-hero'>{''.join(hero_bits)}</section>")
+
+    raw_sections = product_view.get("sections")
+    if isinstance(raw_sections, list):
+        sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: int(item.get("priority") or 0))
+        for item in sorted_sections:
+            title = str(item.get("title") or "").strip()
+            blocks_html = _product_view_blocks_html(item.get("blocks"))
+            if not blocks_html:
+                continue
+            parts.append(
+                "<section class='result-section'>"
+                f"<div class='narrative-section-label'>{html.escape(title)}</div>"
                 f"{blocks_html}"
                 "</section>"
             )

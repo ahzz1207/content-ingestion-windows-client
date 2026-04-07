@@ -39,6 +39,16 @@ MODE_LABELS = {
     "review": "推荐导览",
 }
 
+DOMAIN_LABELS = {
+    "macro_business": "宏观商业",
+    "politics_public_issue": "公共议题",
+    "game_guide": "游戏攻略",
+    "personal_narrative": "个人叙事",
+    "generic": "通用",
+    "market-intel": "宏观商业",
+    "briefing": "简报",
+}
+
 
 class InlineResultView(QWidget):
     """Full-window widget that renders an InsightBriefV2 as the main content."""
@@ -86,6 +96,16 @@ class InlineResultView(QWidget):
         content_layout.setContentsMargins(0, 0, 16, 0)
         content_layout.setSpacing(20)
 
+        self._update_banner_frame = QFrame()
+        self._update_banner_frame.setObjectName("CoverageBanner")
+        update_banner_layout = QHBoxLayout(self._update_banner_frame)
+        update_banner_layout.setContentsMargins(18, 12, 18, 12)
+        self._update_banner_label = QLabel("")
+        self._update_banner_label.setObjectName("BodyText")
+        self._update_banner_label.setWordWrap(True)
+        update_banner_layout.addWidget(self._update_banner_label)
+        self._update_banner_frame.hide()
+
         # Hero block
         self._hero_frame = QFrame()
         self._hero_frame.setObjectName("HeroCard")
@@ -118,8 +138,11 @@ class InlineResultView(QWidget):
         self._content_kind_chip.setObjectName("TagChip")
         self._author_stance_chip = QLabel("")
         self._author_stance_chip.setObjectName("TagChipMuted")
+        self._domain_chip = QLabel("")
+        self._domain_chip.setObjectName("TagChipMuted")
         tags_row_layout.addWidget(self._mode_chip)
         tags_row_layout.addWidget(self._content_kind_chip)
+        tags_row_layout.addWidget(self._domain_chip)
         tags_row_layout.addWidget(self._author_stance_chip)
         tags_row_layout.addStretch(1)
         self._hero_tags_row.hide()
@@ -269,6 +292,7 @@ class InlineResultView(QWidget):
         action_layout.addWidget(self._save_btn)
         action_layout.addStretch(1)
 
+        content_layout.addWidget(self._update_banner_frame)
         content_layout.addWidget(self._hero_frame)
         content_layout.addWidget(self._card_frame)
         content_layout.addWidget(self._takeaways_frame)
@@ -304,6 +328,7 @@ class InlineResultView(QWidget):
         """Populate the view from a ResultWorkspaceEntry with an optional InsightBriefV2."""
         self._entry = entry
         mode_label = MODE_LABELS.get((resolved_mode or "").strip().lower(), "")
+        domain_label = self._resolved_domain_label(entry)
         warnings_brief = brief
         product_view = _product_view_payload(entry)
         product_hero = product_view.get("hero") if isinstance(product_view, dict) else None
@@ -326,7 +351,9 @@ class InlineResultView(QWidget):
         if brief is not None:
             # Full view
             self._hero_title.setText(brief.hero.title)
-            self._hero_take.setText(brief.hero.one_sentence_take)
+            hero_take = str(brief.hero.one_sentence_take or "").strip()
+            self._hero_take.setText(hero_take)
+            self._hero_take.setVisible(bool(hero_take and not self._looks_like_duplicate(hero_take, brief.hero.title)))
             byline_parts = [v for v in (entry.author, entry.published_at, entry.platform) if v]
             self._hero_byline.setText("  ·  ".join(byline_parts) if byline_parts else "")
             self._hero_byline.setVisible(bool(byline_parts))
@@ -338,9 +365,11 @@ class InlineResultView(QWidget):
             self._mode_chip.setVisible(bool(mode_label))
             self._content_kind_chip.setText(kind)
             self._content_kind_chip.setVisible(bool(kind))
+            self._domain_chip.setText(domain_label)
+            self._domain_chip.setVisible(bool(domain_label))
             self._author_stance_chip.setText(stance)
             self._author_stance_chip.setVisible(bool(stance))
-            self._hero_tags_row.setVisible(bool(mode_label or kind or stance))
+            self._hero_tags_row.setVisible(bool(mode_label or kind or domain_label or stance))
 
             key_point_viewpoints = [v for v in brief.viewpoints if v.kind == "key_point"]
             self._clear_layout(self._takeaways_list_layout)
@@ -420,13 +449,20 @@ class InlineResultView(QWidget):
                 else ""
             )
             self._hero_title.setText(hero_title or entry.title or "Analysis Complete")
-            self._hero_take.setText(hero_take or getattr(entry, "summary", "") or "")
-            self._hero_byline.setVisible(False)
+            resolved_take = hero_take or getattr(entry, "summary", "") or ""
+            self._hero_take.setText(resolved_take)
+            self._hero_take.setVisible(bool(resolved_take and not self._looks_like_duplicate(resolved_take, self._hero_title.text())))
+            byline_parts = [v for v in (entry.author, entry.published_at, entry.platform) if v]
+            self._hero_byline.setText("  ·  ".join(byline_parts) if byline_parts else "")
+            self._hero_byline.setVisible(bool(byline_parts))
             self._mode_chip.setText(mode_label)
             self._mode_chip.setVisible(bool(mode_label))
-            self._content_kind_chip.setVisible(False)
+            self._content_kind_chip.setText(domain_label)
+            self._content_kind_chip.setVisible(bool(domain_label))
+            self._domain_chip.clear()
+            self._domain_chip.hide()
             self._author_stance_chip.setVisible(False)
-            self._hero_tags_row.setVisible(bool(mode_label))
+            self._hero_tags_row.setVisible(bool(mode_label or domain_label))
             self._takeaways_frame.hide()
             self._verification_frame.hide()
             self._bottom_line_frame.hide()
@@ -536,6 +572,39 @@ class InlineResultView(QWidget):
             item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+    @staticmethod
+    def _looks_like_duplicate(candidate: str, title: str) -> bool:
+        normalized_candidate = " ".join(candidate.split())
+        normalized_title = " ".join(title.split())
+        return bool(normalized_candidate and normalized_title and normalized_candidate == normalized_title)
+
+    @staticmethod
+    def _resolved_domain_label(entry: ResultWorkspaceEntry) -> str:
+        normalized = entry.details.get("normalized") if isinstance(entry.details, dict) else None
+        if not isinstance(normalized, dict):
+            return ""
+        metadata = normalized.get("metadata")
+        if not isinstance(metadata, dict):
+            return ""
+        llm_processing = metadata.get("llm_processing")
+        if not isinstance(llm_processing, dict):
+            return ""
+        value = str(
+            llm_processing.get("resolved_domain_template")
+            or llm_processing.get("domain_template")
+            or ""
+        ).strip()
+        return DOMAIN_LABELS.get(value, value.replace("_", " ").strip())
+
+    def show_update_banner(self, message: str) -> None:
+        text = message.strip()
+        if not text:
+            self._update_banner_frame.hide()
+            return
+        self._update_banner_label.setText(text)
+        self._update_banner_frame.show()
+        QTimer.singleShot(5000, self._update_banner_frame.hide)
 
     def _copy_to_clipboard(self) -> None:
         if self._entry is None:

@@ -150,6 +150,15 @@ def _resolved_domain_template_from_entry(entry: ResultWorkspaceEntry) -> str:
     metadata = normalized.get("metadata")
     if not isinstance(metadata, dict):
         return ""
+    llm_processing = metadata.get("llm_processing")
+    if isinstance(llm_processing, dict):
+        resolved = str(
+            llm_processing.get("resolved_domain_template")
+            or llm_processing.get("domain_template")
+            or ""
+        ).strip()
+        if resolved:
+            return resolved
     reinterpretation = metadata.get("reinterpretation")
     if not isinstance(reinterpretation, dict):
         return ""
@@ -159,6 +168,41 @@ def _resolved_domain_template_from_entry(entry: ResultWorkspaceEntry) -> str:
         or ""
     ).strip()
     return value
+
+
+def _is_gate_page_result(entry: ResultWorkspaceEntry) -> bool:
+    normalized = entry.details.get("normalized") if isinstance(entry.details, dict) else None
+    if not isinstance(normalized, dict):
+        return False
+    metadata = normalized.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    capture_validation = metadata.get("capture_validation")
+    if isinstance(capture_validation, dict) and capture_validation.get("is_gate_page"):
+        return True
+    summary_texts: list[str] = []
+    asset = normalized.get("asset")
+    if isinstance(asset, dict):
+        result = asset.get("result")
+        if isinstance(result, dict):
+            summary = result.get("summary")
+            if isinstance(summary, dict):
+                for key in ("headline", "short_text"):
+                    value = str(summary.get(key) or "").strip().lower()
+                    if value:
+                        summary_texts.append(value)
+    summary_texts.append(str(entry.summary or "").strip().lower())
+    gate_markers = ("access/interruption screen", "environment is abnormal", "去验证", "环境异常", "wappoc_appmsgcaptcha")
+    return any(marker in text for text in summary_texts for marker in gate_markers)
+
+
+def _result_update_banner_text(entry: ResultWorkspaceEntry) -> str:
+    mode_value = (_resolved_mode_from_entry(entry) or "").strip().lower()
+    mode_label = {"argument": "深度分析", "guide": "实用提炼", "review": "推荐导览", "narrative": "叙事导读"}.get(mode_value, "当前结果")
+    domain_value = _resolved_domain_template_from_entry(entry).strip()
+    if domain_value:
+        return f"结果已更新：{mode_label} · {domain_value}"
+    return f"结果已更新：{mode_label}"
 
 
 def _format_updated_at(timestamp: float) -> str:
@@ -637,7 +681,7 @@ class MainWindow(QMainWindow):
             }
             #ResultTitle {
                 font-size: 31px;
-                font-weight: 600;
+                font-weight: 560;
                 color: #16202b;
             }
             #BylineText {
@@ -678,8 +722,8 @@ class MainWindow(QMainWindow):
                 letter-spacing: 0.06em;
             }
             #HeroTake {
-                font-size: 18px;
-                font-weight: 500;
+                font-size: 17px;
+                font-weight: 450;
                 color: #16202b;
             }
             #TakeawayIndexed {
@@ -1018,7 +1062,8 @@ class MainWindow(QMainWindow):
             )
             if answer != QMessageBox.Yes:
                 return
-        if route.strategy == "browser" and not route.profile_exists(self.workflow.service.settings):
+        requires_explicit_login = route.strategy == "browser" and route.platform != "wechat"
+        if requires_explicit_login and not route.profile_exists(self.workflow.service.settings):
             dialog = LoginPromptDialog(parent=self, workflow=self.workflow, route=route)
             if not dialog.exec_and_confirm():
                 self._refresh_environment_status()
@@ -1154,7 +1199,9 @@ class MainWindow(QMainWindow):
         self.stage_label.setText(STAGE_LABELS["processing"])
         self._elapsed_label.show()
         self._elapsed_timer.start()
-        self._refresh_current_job_result()
+        refresh_state = self._refresh_current_job_result()
+        if refresh_state == "processed" and self._latest_result_entry is not None:
+            self.result_inline.show_update_banner(_result_update_banner_text(self._latest_result_entry))
         self._start_result_polling()
 
     def _render_failure(self, state: OperationViewState) -> None:
@@ -1226,6 +1273,7 @@ class MainWindow(QMainWindow):
         self._task_thread = None
         self.footer_label.setText("Reinterpretation ready.")
         self._load_entry_into_result_view(entry)
+        self.result_inline.show_update_banner(_result_update_banner_text(entry))
 
     def _on_reinterpretation_crashed(self, message: str) -> None:
         self._task_thread = None
@@ -1321,6 +1369,17 @@ class MainWindow(QMainWindow):
             self._latest_result_entry = None
             return "missing"
         if result_entry.state == "processed":
+            if _is_gate_page_result(result_entry):
+                self.result_title.setText("Couldn't capture this page")
+                self.result_summary.setText("抓取到的是验证/拦截页面，不是文章正文。请重试或改用已登录浏览器环境。")
+                self.result_summary.show()
+                self.retry_button.show()
+                self.new_url_button.show()
+                self._latest_result_entry = result_entry
+                self._stop_result_polling()
+                self._elapsed_timer.stop()
+                self._elapsed_label.hide()
+                return "failed"
             self._latest_result_entry = result_entry
             brief = result_entry.details.get("insight_brief")
             self.result_inline.load_entry(

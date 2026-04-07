@@ -94,6 +94,60 @@ class MainWindowTests(unittest.TestCase):
         self.assertTrue(self.window._result_poll_timer.isActive())
         self.assertFalse(hasattr(self.window, "refresh_result_button"))
 
+    def test_render_success_shows_in_page_banner_when_processed_result_already_ready(self) -> None:
+        metadata_path = self.window._current_state.job.metadata_path
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text("{}", encoding="utf-8")
+        processed_entry = _processed_entry("job-123")
+        processed_entry.details = {
+            "normalized": {
+                "metadata": {
+                    "llm_processing": {
+                        "resolved_mode": "guide",
+                    }
+                }
+            }
+        }
+
+        with patch("windows_client.gui.main_window.load_job_result", return_value=processed_entry):
+            self.window._render_success(self.window._current_state)
+
+        self.assertFalse(self.window.result_inline._update_banner_frame.isHidden())
+        self.assertIn("结果已更新", self.window.result_inline._update_banner_label.text())
+
+    def test_render_success_fails_fast_for_wechat_gate_page_result(self) -> None:
+        metadata_path = self.window._current_state.job.metadata_path
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text("{}", encoding="utf-8")
+        gate_entry = _processed_entry("job-gate")
+        gate_entry.summary = "The captured page is an access/interruption screen."
+        gate_entry.details = {
+            "normalized": {
+                "asset": {
+                    "result": {
+                        "summary": {
+                            "headline": "The captured page is not the intended article content",
+                            "short_text": "The current environment is abnormal and verification is required.",
+                        }
+                    }
+                },
+                "metadata": {
+                    "capture_validation": {
+                        "is_gate_page": True,
+                        "gate_reason": "wechat_captcha",
+                    },
+                    "llm_processing": {"resolved_mode": "argument"},
+                },
+            }
+        }
+
+        with patch("windows_client.gui.main_window.load_job_result", return_value=gate_entry):
+            state = self.window._refresh_current_job_result(from_auto_poll=True)
+
+        self.assertEqual(state, "failed")
+        self.assertIn("验证", self.window.result_summary.text())
+        self.assertFalse(self.window.retry_button.isHidden())
+
     def test_video_download_controls_show_for_video_routes_only(self) -> None:
         self.window._sync_video_download_controls("https://www.bilibili.com/video/BV1demo/")
         self.assertFalse(self.window.save_video_checkbox.isHidden())
@@ -181,12 +235,16 @@ class MainWindowTests(unittest.TestCase):
             self.window._start_from_input()
 
         login_prompt.assert_not_called()
-        self.assertEqual(self.workflow.export_url_calls, [
+        self.assertEqual(self.workflow.export_url_calls, [])
+        self.assertEqual(self.workflow.export_browser_calls, [
             {
                 "url": "https://mp.weixin.qq.com/s/demo?__biz=abc&mid=1&sn=xyz",
                 "platform": "wechat",
                 "requested_mode": "auto",
                 "video_download_mode": "audio",
+                "profile_dir": self.workflow.service.settings.browser_profiles_dir / "wechat",
+                "wait_for_selector": "#js_content",
+                "wait_for_selector_state": "visible",
             }
         ])
 
@@ -485,6 +543,8 @@ class MainWindowTests(unittest.TestCase):
         ])
         self.assertEqual(self.window._latest_result_entry.job_id, "job-123--reinterpret-01")
         self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+        self.assertFalse(self.window.result_inline._update_banner_frame.isHidden())
+        self.assertIn("结果已更新", self.window.result_inline._update_banner_label.text())
 
     def test_start_reinterpretation_preserves_selected_version_job_id(self) -> None:
         self.window._latest_result_entry = _processed_entry("job-123--reinterpret-02")
@@ -550,10 +610,54 @@ class NormalizeUrlTests(unittest.TestCase):
         self.assertEqual(_normalize_url(url), url)
 
 
+class WechatSubmitRoutingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        shared_root = Path(self.temp_dir.name) / "shared_inbox"
+        shared_root.mkdir(parents=True)
+        self.workflow = _FakeWorkflow(shared_root)
+        (self.workflow.service.settings.browser_profiles_dir / "wechat").mkdir(parents=True, exist_ok=True)
+        self.window = MainWindow(workflow=self.workflow)
+        self.window._watcher_running = True
+
+    def tearDown(self) -> None:
+        self.window.close()
+        self.temp_dir.cleanup()
+
+    def test_wechat_submission_uses_browser_when_profile_exists(self) -> None:
+        self.window.url_input.setText("https://mp.weixin.qq.com/s/demo")
+
+        class _Signal:
+            def connect(self, callback):
+                self.callback = callback
+
+        class _FakeThread:
+            def __init__(self, task):
+                self.task = task
+                self.progress_changed = _Signal()
+                self.completed = _Signal()
+                self.crashed = _Signal()
+
+            def start(self) -> None:
+                self.task(lambda stage: None)
+
+        with patch("windows_client.gui.main_window.WorkflowTaskThread", _FakeThread):
+            self.window._start_from_input()
+
+        self.assertEqual(len(self.workflow.export_browser_calls), 1)
+        self.assertEqual(len(self.workflow.export_url_calls), 0)
+        self.assertEqual(self.workflow.export_browser_calls[0]["platform"], "wechat")
+
+
 class _FakeWorkflow:
     def __init__(self, shared_root: Path) -> None:
         self.service = _FakeService(shared_root)
         self.export_url_calls: list[dict[str, object]] = []
+        self.export_browser_calls: list[dict[str, object]] = []
 
     def run_doctor(self) -> OperationViewState:
         return OperationViewState(
@@ -603,6 +707,45 @@ class _FakeWorkflow:
             ),
         )
 
+    def export_browser_job(
+        self,
+        *,
+        url: str,
+        platform: str | None = None,
+        requested_mode: str = "auto",
+        video_download_mode: str = "audio",
+        profile_dir: Path | None = None,
+        wait_for_selector: str | None = None,
+        wait_for_selector_state: str | None = None,
+        on_progress=None,
+    ) -> OperationViewState:
+        self.export_browser_calls.append(
+            {
+                "url": url,
+                "platform": platform,
+                "requested_mode": requested_mode,
+                "video_download_mode": video_download_mode,
+                "profile_dir": profile_dir,
+                "wait_for_selector": wait_for_selector,
+                "wait_for_selector_state": wait_for_selector_state,
+            }
+        )
+        if on_progress is not None:
+            on_progress("collecting")
+            on_progress("exporting")
+        return OperationViewState(
+            operation="export-browser-job",
+            status="success",
+            summary="ok",
+            job=JobExportSnapshot(
+                job_id="job-789",
+                job_dir=self.service.settings.effective_shared_inbox_root / "incoming" / "job-789",
+                payload_path=self.service.settings.effective_shared_inbox_root / "incoming" / "job-789" / "payload.html",
+                metadata_path=self.service.settings.effective_shared_inbox_root / "incoming" / "job-789" / "metadata.json",
+                ready_path=self.service.settings.effective_shared_inbox_root / "incoming" / "job-789" / "READY",
+            ),
+        )
+
 
 class _FakeService:
     def __init__(self, shared_root: Path) -> None:
@@ -623,6 +766,7 @@ class _FakeService:
 class _FakeSettings:
     def __init__(self, shared_root: Path) -> None:
         self.effective_shared_inbox_root = shared_root
+        self.browser_profiles_dir = shared_root / "profiles"
         self.llm_credentials_available = True
         self.whisper_model_override = None
 
