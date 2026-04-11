@@ -18,3 +18,4 @@ data/wsl-watch-state.json
 data/wsl-watch.log
 !data/.gitkeep
 !data/shared_inbox/.gitkeep
+data/collab/
