@@ -561,7 +561,7 @@ git commit -m "feat(wsl): thread requested_mode from metadata into llm analysis"
 
 ---
 
-## Phase 2: Windows Entry and Lightweight Result Surface
+## Phase 2: Windows Entry and Lightweight Result Surface ✅ COMPLETE (2026-04-03)
 
 ### Task 7: Propagate `requested_mode` through exporter, service, workflow, API
 
@@ -576,62 +576,11 @@ git commit -m "feat(wsl): thread requested_mode from metadata into llm analysis"
 - Test: `H:/demo-win/tests/unit/test_api/test_job_manager.py`
 - Test: `H:/demo-win/tests/unit/test_api/test_server.py`
 
-- [ ] **Step 1: Write failing propagation tests**
-
-Add tests that assert:
-
-- `ExportRequest` and `JobMetadata` accept `requested_mode`
-- `metadata.json` writes `requested_mode`
-- `service.export_url_job()` and `service.export_browser_job()` pass `requested_mode` into `ExportRequest`
-- `workflow.export_url_job()` and `workflow.export_browser_job()` accept and forward `requested_mode`
-- API `/api/v1/ingest` forwards `requested_mode` into `job_manager.submit_url()`
-
-- [ ] **Step 2: Run the targeted tests and confirm failure**
-
-```bash
-cd H:/demo-win && python -m pytest tests/unit/test_job_exporter.py tests/unit/test_api/test_job_manager.py tests/unit/test_api/test_server.py -k "requested_mode" -v
-```
-
-- [ ] **Step 3: Implement the propagation path**
-
-Make these exact signature updates:
-
-```python
-# job_exporter/models.py
-requested_mode: str = "auto"
-
-# app/service.py
-def export_url_job(..., requested_mode: str = "auto", ...):
-def export_browser_job(..., requested_mode: str = "auto", ...):
-
-# app/workflow.py
-def export_url_job(..., requested_mode: str = "auto", ...):
-def export_browser_job(..., requested_mode: str = "auto", ...):
-
-# api/job_manager.py
-def submit_url(..., requested_mode: str = "auto", ...):
-```
-
-In `server.py`, read:
-
-```python
-requested_mode = str(payload.get("requested_mode") or "auto").strip()
-```
-
-- [ ] **Step 4: Run targeted tests, then Windows unit suite**
-
-```bash
-cd H:/demo-win && python -m pytest tests/unit/test_job_exporter.py tests/unit/test_api/test_job_manager.py tests/unit/test_api/test_server.py -k "requested_mode" -v
-cd H:/demo-win && python -m pytest tests/unit/ -q
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-cd H:/demo-win
-git add src/windows_client/job_exporter/models.py src/windows_client/job_exporter/exporter.py src/windows_client/app/service.py src/windows_client/app/workflow.py src/windows_client/api/job_manager.py src/windows_client/api/server.py tests/unit/test_job_exporter.py tests/unit/test_api/test_job_manager.py tests/unit/test_api/test_server.py
-git commit -m "feat(win): propagate requested_mode through export and api paths"
-```
+- [x] **Step 1: Write failing propagation tests**
+- [x] **Step 2: Run the targeted tests and confirm failure**
+- [x] **Step 3: Implement the propagation path**
+- [x] **Step 4: Run targeted tests, then Windows unit suite**
+- [x] **Step 5: Commit**
 
 ### Task 8: Add GUI template selector and thread it into both HTTP and browser exports
 
@@ -639,51 +588,11 @@ git commit -m "feat(win): propagate requested_mode through export and api paths"
 - Modify: `H:/demo-win/src/windows_client/gui/main_window.py`
 - Test: `H:/demo-win/tests/unit/test_main_window.py`
 
-- [ ] **Step 1: Write failing GUI tests**
-
-Add tests that assert:
-
-- `template_selector` exists with exactly four choices
-- item data values are `auto`, `argument`, `guide`, `review`
-- `_start_from_input()` and `_run_export()` propagate the selected value into `workflow.export_url_job()` or `workflow.export_browser_job()`
-
-- [ ] **Step 2: Run the targeted tests and confirm failure**
-
-```bash
-cd H:/demo-win && python -m pytest tests/unit/test_main_window.py -k "template_selector or requested_mode" -v
-```
-
-- [ ] **Step 3: Implement the selector**
-
-In `H:/demo-win/src/windows_client/gui/main_window.py`:
-
-- import `QComboBox`
-- add `self.template_selector = QComboBox()`
-- populate item data with `auto`, `argument`, `guide`, `review`
-- place it near the URL field on the submit card
-- in `_start_from_input()` read:
-
-```python
-requested_mode = self.template_selector.currentData() or "auto"
-```
-
-- pass `requested_mode` through `_run_export()`
-- extend `_run_export()` to pass `requested_mode` into both `workflow.export_url_job()` and `workflow.export_browser_job()`
-
-- [ ] **Step 4: Run targeted tests, then Windows unit suite**
-
-```bash
-cd H:/demo-win && python -m pytest tests/unit/test_main_window.py -k "template_selector or requested_mode" -v
-cd H:/demo-win && python -m pytest tests/unit/ -q
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-cd H:/demo-win
-git add src/windows_client/gui/main_window.py tests/unit/test_main_window.py
-git commit -m "feat(win): add GUI template selector for template system v1"
-```
+- [x] **Step 1: Write failing GUI tests**
+- [x] **Step 2: Run the targeted tests and confirm failure**
+- [x] **Step 3: Implement the selector** (`analysis_mode_combo` with ANALYSIS_MODE_OPTIONS; resets to Auto on New URL)
+- [x] **Step 4: Run targeted tests, then Windows unit suite**
+- [x] **Step 5: Commit**
 
 ### Task 9: Make `insight_brief` and result rendering lightly mode-aware
 
@@ -695,63 +604,12 @@ git commit -m "feat(win): add GUI template selector for template system v1"
 - Test: `H:/demo-win/tests/unit/test_result_renderer.py`
 - Test: `H:/demo-win/tests/unit/test_main_window.py`
 
-- [ ] **Step 1: Write failing result-surface tests**
-
-Add tests that assert:
-
-- `adapt_from_structured_result()` can read `editorial.base` plus one mode-specific section:
-  - `argument` -> `evidence_backed_points`
-  - `guide` -> `recommended_steps`
-  - `review` -> `highlights`
-- `result_renderer.render(..., resolved_mode="guide")` shows a mode pill
-- the main-window render path passes `resolved_mode` into the renderer / inline result view call chain
-
-- [ ] **Step 2: Run the targeted tests and confirm failure**
-
-```bash
-cd H:/demo-win && python -m pytest tests/unit/test_insight_brief.py tests/unit/test_result_renderer.py tests/unit/test_main_window.py -k "editorial or mode_pill or resolved_mode" -v
-```
-
-- [ ] **Step 3: Implement lightweight adaptation**
-
-In `H:/demo-win/src/windows_client/app/insight_brief.py`:
-
-- if `result["editorial"]` exists:
-  - build `hero` from `editorial.base.core_summary`
-  - build `synthesis_conclusion` from `editorial.base.bottom_line`
-  - build `quick_takeaways` from `editorial.base.save_worthy_points`
-  - branch lightly by `resolved_mode`
-- keep the current legacy fallback intact when `editorial` is absent
-
-Do **not** attempt full per-mode rendering logic in v1.
-
-- [ ] **Step 4: Implement mode pill and wire the call site**
-
-In `H:/demo-win/src/windows_client/gui/result_renderer.py`:
-
-- add `_MODE_DISPLAY_LABELS`
-- add `self.mode_pill`
-- extend `render()` to accept `resolved_mode: str | None = None`
-
-In `H:/demo-win/src/windows_client/gui/main_window.py`:
-
-- update the render call path so the resolved mode from the current result is passed into the renderer or inline result view
-- do not rely on renderer defaults; pass it explicitly
-
-- [ ] **Step 5: Run targeted tests, then Windows unit suite**
-
-```bash
-cd H:/demo-win && python -m pytest tests/unit/test_insight_brief.py tests/unit/test_result_renderer.py tests/unit/test_main_window.py -k "editorial or mode_pill or resolved_mode" -v
-cd H:/demo-win && python -m pytest tests/unit/ -q
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-cd H:/demo-win
-git add src/windows_client/app/insight_brief.py src/windows_client/gui/result_renderer.py src/windows_client/gui/main_window.py tests/unit/test_insight_brief.py tests/unit/test_result_renderer.py tests/unit/test_main_window.py
-git commit -m "feat(win): add lightweight mode-aware result rendering"
-```
+- [x] **Step 1: Write failing result-surface tests**
+- [x] **Step 2: Run the targeted tests and confirm failure**
+- [x] **Step 3: Implement lightweight adaptation** (`_adapt_from_editorial()` with argument/guide/review branches; legacy fallback intact)
+- [x] **Step 4: Implement mode pill and wire the call site** (`_mode_pill_html()` in renderer; `_mode_chip` native widget in `inline_result_view`; `_resolved_mode_from_entry()` in main_window with explicit threading)
+- [x] **Step 5: Run targeted tests, then Windows unit suite** (196 passed → 200 after post-review fixes)
+- [x] **Step 6: Commit**
 
 ---
 
@@ -771,17 +629,17 @@ They should be planned only after this v1 contract is green in both repos.
 
 ## Acceptance Checklist
 
-- [ ] GUI submit page exposes exactly four choices: `auto`, `argument`, `guide`, `review`
-- [ ] GUI submit path passes the selected mode into both direct URL export and browser export
-- [ ] `metadata.json` preserves `requested_mode`
-- [ ] WSL `analysis_result.json` preserves top-level `requested_mode`, `resolved_mode`, `mode_confidence`
-- [ ] WSL `normalized.json` preserves the same three fields
-- [ ] `StructuredResult.editorial.base.core_summary` and `bottom_line` are non-empty for all three modes
-- [ ] `argument`, `guide`, and `review` differ structurally in `mode_payload`, not just wording
-- [ ] `editorial.display` exists for the minimum v1 fields
-- [ ] GUI result view can display a mode pill from `resolved_mode`
-- [ ] WSL: `cd /home/ahzz1207/codex-demo && python3 -m pytest -q` passes
-- [ ] Windows: `cd H:/demo-win && python -m pytest tests/unit/ -q` passes
+- [x] GUI submit page exposes exactly four choices: `auto`, `argument`, `guide`, `review`
+- [x] GUI submit path passes the selected mode into both direct URL export and browser export
+- [x] `metadata.json` preserves `requested_mode`
+- [ ] WSL `analysis_result.json` preserves top-level `requested_mode`, `resolved_mode`, `mode_confidence` — **pending Phase 1**
+- [ ] WSL `normalized.json` preserves the same three fields — **pending Phase 1**
+- [ ] `StructuredResult.editorial.base.core_summary` and `bottom_line` are non-empty for all three modes — **pending Phase 1**
+- [ ] `argument`, `guide`, and `review` differ structurally in `mode_payload`, not just wording — **pending Phase 1**
+- [ ] `editorial.display` exists for the minimum v1 fields — **pending Phase 1**
+- [x] GUI result view can display a mode pill from `resolved_mode`
+- [ ] WSL: `cd /home/ahzz1207/codex-demo && python3 -m pytest -q` passes — **pending Phase 1**
+- [x] Windows: `cd H:/demo-win && python -m pytest tests/unit/ -q` passes (200 passed)
 
 ---
 
@@ -800,3 +658,30 @@ Implement in this order and do not start Phase 2 until Phase 1 is fully green:
 9. Task 9 - add lightweight mode-aware result rendering
 
 This keeps the contract stable before any UI depends on it.
+
+---
+
+## Phase 2 Code Review Summary (2026-04-03)
+
+Reviewed by Claude. Branch `codex/template-system-v1`, 18 files modified, 200 tests passed.
+
+### Issues found and fixed
+
+**1. `None` leak in `workflow.py` (Medium — fixed)**
+
+Both `export_url_job` and `export_browser_job` defaulted to `requested_mode: str | None = None`. When called without the argument, `None` was passed explicitly into `service.py`, overriding its `str = "auto"` default, and propagated all the way to `metadata.json` as `null`. The GUI path was safe (always passes a string), but any non-GUI caller would produce a malformed metadata file. Fixed by changing the defaults to `str = "auto"`.
+
+**2. Degraded-path mode pill blocked by stale gating (Low — fixed)**
+
+`_structured_result_payload()` gated on old field names only (`summary`, `key_points`, etc.). For editorial-format results that omit those fields, the function returned `None`, preventing the mode pill from rendering in the QTextBrowser fallback path. The native widget path (`_mode_chip` in `inline_result_view`) was unaffected. Fixed by adding `"editorial"` to the gating check.
+
+### Confirmed working correctly
+
+- Mode pill on main success view: uses native `_mode_chip` widget, reads `resolved_mode` from `_resolved_mode_from_entry()` — independent of the gating bug.
+- Evidence linking for argument mode: `resolve_evidence_for_item(payload, evidence_index)` called correctly in `_adapt_from_editorial()`.
+- `resolved_mode` threading: explicit, not implicit — `main_window.py` computes it and passes it all the way to `load_entry()`.
+- Mode selector reset: `analysis_mode_combo.setCurrentIndex(0)` in `_reset_to_ready_state()` confirmed.
+
+### Overall assessment
+
+Clean, disciplined execution. Scope was held to the plan. The main contract (metadata.json, GUI selector, mode pill, editorial adaptation) is solid. The two issues were both minor oversights in edge-case paths, not architectural problems. Ready for Phase 1 WSL work.
