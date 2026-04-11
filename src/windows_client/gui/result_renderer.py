@@ -190,11 +190,19 @@ def _mode_pill_html(entry: ResultWorkspaceEntry, resolved_mode: str | None = Non
         "argument": "深度分析",
         "guide": "实用提炼",
         "review": "推荐导览",
+        "narrative": "叙事",
     }
     resolved_mode = resolved_mode or _resolved_mode(entry)
     if resolved_mode not in labels:
         return ""
     return f"<div class='status-chip status-supported'>{html.escape(labels[resolved_mode])}</div>"
+
+
+def _safe_priority(item: dict) -> int:
+    try:
+        return int(item.get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _analysis_skip_reason(entry: ResultWorkspaceEntry) -> str | None:
@@ -678,7 +686,7 @@ def _product_view_html(product_view: dict[str, object]) -> str:
     if isinstance(raw_sections, list):
         sorted_sections = sorted(
             [item for item in raw_sections if isinstance(item, dict)],
-            key=lambda item: int(item.get("priority") or 0),
+            key=lambda item: _safe_priority(item),
         )
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
@@ -712,7 +720,7 @@ def _analysis_product_view_html(product_view: dict[str, object]) -> str:
     if isinstance(raw_sections, list):
         sorted_sections = sorted(
             [item for item in raw_sections if isinstance(item, dict)],
-            key=lambda item: int(item.get("priority") or 0),
+            key=lambda item: _safe_priority(item),
         )
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
@@ -757,7 +765,7 @@ def _guide_product_view_html(product_view: dict[str, object]) -> str:
     if isinstance(raw_sections, list):
         sorted_sections = sorted(
             [item for item in raw_sections if isinstance(item, dict)],
-            key=lambda item: int(item.get("priority") or 0),
+            key=lambda item: _safe_priority(item),
         )
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()

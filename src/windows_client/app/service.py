@@ -463,54 +463,6 @@ class WindowsClientService:
                 return candidate
             counter += 1
 
-    def _rewrite_reinterpreted_payloads(
-        self,
-        target_dir: Path,
-        *,
-        target_job_id: str,
-        reinterpretation_metadata: dict[str, str],
-    ) -> None:
-        normalized_path = target_dir / "normalized.json"
-        normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
-        normalized["job_id"] = target_job_id
-        metadata = normalized.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-            normalized["metadata"] = metadata
-        self._apply_reinterpretation_metadata(metadata, reinterpretation_metadata)
-
-        asset = normalized.get("asset")
-        if isinstance(asset, dict):
-            asset_metadata = asset.get("metadata")
-            if not isinstance(asset_metadata, dict):
-                asset_metadata = {}
-                asset["metadata"] = asset_metadata
-            self._apply_reinterpretation_metadata(asset_metadata, reinterpretation_metadata)
-        normalized_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        metadata_path = target_dir / "metadata.json"
-        if metadata_path.exists():
-            metadata_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
-            metadata_payload["job_id"] = target_job_id
-            metadata_payload["requested_mode"] = reinterpretation_metadata["requested_reading_goal"]
-            metadata_payload["domain_template"] = reinterpretation_metadata["requested_domain_template"]
-            metadata_payload["reinterpretation"] = dict(reinterpretation_metadata)
-            metadata_path.write_text(json.dumps(metadata_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        capture_manifest_path = target_dir / "capture_manifest.json"
-        if capture_manifest_path.exists():
-            capture_manifest = json.loads(capture_manifest_path.read_text(encoding="utf-8"))
-            if isinstance(capture_manifest, dict):
-                capture_manifest["job_id"] = target_job_id
-                capture_manifest_path.write_text(json.dumps(capture_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def _apply_reinterpretation_metadata(
-        self,
-        metadata: dict[str, object],
-        reinterpretation_metadata: dict[str, str],
-    ) -> None:
-        metadata["reinterpretation"] = dict(reinterpretation_metadata)
-
     def _write_active_version(
         self,
         base_dir: Path,

@@ -1204,6 +1204,8 @@ class MainWindow(QMainWindow):
         self._run_export(route=route, url=url)
 
     def _run_export(self, *, route: PlatformRoute, url: str, force_browser: bool = False) -> None:
+        if self._task_thread is not None and self._task_thread.isRunning():
+            return
         self._stop_result_polling()
         self._set_task_state(route=route, url=url, stage="analyzing_url")
         self.stack.setCurrentWidget(self.task_page)
