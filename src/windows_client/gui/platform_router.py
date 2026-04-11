@@ -32,7 +32,9 @@ class PlatformRoute:
 
 
 def resolve_platform_route(url: str) -> PlatformRoute:
-    host = urlparse(url).netloc.lower()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    lowered_url = url.lower()
     if "mp.weixin.qq.com" in host:
         return PlatformRoute(
             platform="wechat",
@@ -60,6 +62,14 @@ def resolve_platform_route(url: str) -> PlatformRoute:
             profile_slug="youtube",
         )
     if "bilibili.com" in host or "b23.tv" in host:
+        if "watchlater" in lowered_url:
+            return PlatformRoute(
+                platform="bilibili",
+                display_name="Bilibili Watch Later",
+                strategy="browser",
+                start_url="https://www.bilibili.com/",
+                profile_slug="bilibili",
+            )
         return PlatformRoute(
             platform="bilibili",
             display_name="Bilibili Video",

@@ -373,6 +373,56 @@ class WindowsClientServiceTests(unittest.TestCase):
             profile_dir=self.project_root / "data" / "browser-profiles" / "bilibili",
         )
 
+    def test_export_url_job_uses_existing_bilibili_profile_for_video_download(self) -> None:
+        profile_dir = self.project_root / "data" / "browser-profiles" / "bilibili"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        video_source = self.project_root / "downloaded.mp3"
+        video_source.parent.mkdir(parents=True, exist_ok=True)
+        video_source.write_bytes(b"audio-bytes")
+        video_downloader = MagicMock()
+        video_downloader.supports.return_value = True
+        video_downloader.download.return_value.cleanup_dir = None
+        video_downloader.download.return_value.artifacts = (
+            CollectedArtifact(
+                relative_path="attachments/video/video.mp3",
+                media_type="audio/mpeg",
+                role="audio_file",
+                source_path=video_source,
+            ),
+        )
+        video_downloader.download.return_value.title_hint = "Downloaded Video"
+        video_downloader.download.return_value.author_hint = "Uploader A"
+        video_downloader.download.return_value.published_at_hint = "2026-03-15 17:00:00"
+        video_downloader.download.return_value.description_hint = "Short clean description"
+        video_downloader.download.return_value.final_url = "https://www.bilibili.com/video/BV1demo/"
+
+        url_collector = MagicMock()
+        url_collector.collect.return_value = CollectedPayload(
+            source_url="https://www.bilibili.com/video/BV1demo/",
+            content_type="html",
+            payload_text="<html><body>Video</body></html>",
+            final_url="https://www.bilibili.com/video/BV1demo/",
+            platform="bilibili",
+            content_shape="video",
+        )
+        service = WindowsClientService(
+            settings=Settings(project_root=self.project_root),
+            mock_collector=MockCollector(),
+            url_collector=url_collector,
+            browser_collector=MagicMock(),
+            exporter=JobExporter(settings=Settings(project_root=self.project_root)),
+            video_downloader=video_downloader,
+        )
+
+        service.export_url_job(url="https://www.bilibili.com/video/BV1demo/")
+
+        video_downloader.download.assert_called_once_with(
+            "https://www.bilibili.com/video/BV1demo/",
+            platform="bilibili",
+            download_mode="audio",
+            profile_dir=profile_dir,
+        )
+
     def test_export_url_job_skips_video_download_when_mode_is_none(self) -> None:
         video_downloader = MagicMock()
         url_collector = MagicMock()
@@ -399,6 +449,50 @@ class WindowsClientServiceTests(unittest.TestCase):
 
         self.assertTrue(result.payload_path.exists())
         video_downloader.download.assert_not_called()
+
+    def test_export_url_job_persists_requested_mode_in_metadata(self) -> None:
+        url_collector = MagicMock()
+        url_collector.collect.return_value = CollectedPayload(
+            source_url="https://example.com/guide",
+            content_type="html",
+            payload_text="<html><body>Guide</body></html>",
+            platform="generic",
+            content_shape="article",
+        )
+        service = WindowsClientService(
+            settings=Settings(project_root=self.project_root),
+            mock_collector=MockCollector(),
+            url_collector=url_collector,
+            browser_collector=MagicMock(),
+            exporter=JobExporter(settings=Settings(project_root=self.project_root)),
+        )
+
+        result = service.export_url_job(url="https://example.com/guide", requested_mode="guide")
+
+        metadata_text = result.metadata_path.read_text(encoding="utf-8")
+        self.assertIn('"requested_mode": "guide"', metadata_text)
+
+    def test_save_result_to_library_delegates_to_store(self) -> None:
+        entry = MagicMock()
+        self.service.library_store = MagicMock()
+        self.service.library_store.save_entry.return_value.entry_id = "lib_0001"
+
+        result = self.service.save_result_to_library(entry)
+
+        self.service.library_store.save_entry.assert_called_once_with(entry)
+        self.assertEqual(result.entry_id, "lib_0001")
+
+    def test_restore_library_interpretation_delegates_to_store(self) -> None:
+        self.service.library_store = MagicMock()
+        self.service.library_store.restore_interpretation.return_value.entry_id = "lib_0001"
+
+        result = self.service.restore_library_interpretation("lib_0001", "interp_1")
+
+        self.service.library_store.restore_interpretation.assert_called_once_with(
+            entry_id="lib_0001",
+            interpretation_id="interp_1",
+        )
+        self.assertEqual(result.entry_id, "lib_0001")
 
 
 if __name__ == "__main__":

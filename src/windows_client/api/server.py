@@ -79,6 +79,7 @@ def create_app(*, config: ApiConfig | None = None, manager: JobManager | None = 
             url=url,
             content_type=_optional_text(payload.get("content_type")),
             platform=_optional_text(payload.get("platform")),
+            requested_mode=_optional_text(payload.get("requested_mode")) or "auto",
             video_download_mode=_optional_text(payload.get("video_download_mode")),
         )
         return job.to_dict()

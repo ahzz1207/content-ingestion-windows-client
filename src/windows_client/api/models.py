@@ -30,6 +30,7 @@ class IngestedJob:
     source_url: str
     content_type: str
     platform: str
+    requested_mode: str = "auto"
     created_at: str | None = None
     job_dir: Path | None = None
     payload_path: Path | None = None
@@ -44,6 +45,7 @@ class IngestedJob:
             "content_type": self.content_type,
             "platform": self.platform,
         }
+        data["requested_mode"] = self.requested_mode
         if self.created_at:
             data["created_at"] = self.created_at
         if self.job_dir:

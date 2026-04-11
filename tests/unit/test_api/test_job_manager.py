@@ -26,6 +26,7 @@ class _FakeService:
         content_type: str | None = None,
         platform: str | None = None,
         video_download_mode: str | None = None,
+        requested_mode: str | None = None,
     ) -> ExportResult:
         self.calls.append(
             {
@@ -34,6 +35,7 @@ class _FakeService:
                 "content_type": content_type,
                 "platform": platform,
                 "video_download_mode": video_download_mode,
+                "requested_mode": requested_mode,
             }
         )
         job_dir = (shared_root or self.shared_root) / "incoming" / "job123"
@@ -48,6 +50,7 @@ class _FakeService:
                     "source_url": url,
                     "platform": platform or "generic",
                     "content_type": content_type or "html",
+                    "requested_mode": requested_mode or "auto",
                     "collected_at": "2026-03-26T12:00:00+08:00",
                 }
             ),
@@ -79,6 +82,7 @@ class JobManagerTests(unittest.TestCase):
             url="https://example.com/article",
             platform="generic",
             video_download_mode="audio",
+            requested_mode="guide",
         )
 
         self.assertEqual(result.job_id, "job123")
@@ -88,11 +92,19 @@ class JobManagerTests(unittest.TestCase):
         self.assertTrue(result.ready_path.exists())
         self.assertEqual(self.service.calls[0]["shared_root"], self.shared_root)
         self.assertEqual(self.service.calls[0]["url"], "https://example.com/article")
+        self.assertEqual(self.service.calls[0]["requested_mode"], "guide")
+        self.assertEqual(result.requested_mode, "guide")
 
     def test_submit_url_defaults_video_download_mode_to_audio(self) -> None:
         self.manager.submit_url(url="https://example.com/video")
 
         self.assertEqual(self.service.calls[0]["video_download_mode"], "audio")
+
+    def test_submit_url_defaults_requested_mode_to_auto(self) -> None:
+        result = self.manager.submit_url(url="https://example.com/article")
+
+        self.assertEqual(self.service.calls[0]["requested_mode"], "auto")
+        self.assertEqual(result.requested_mode, "auto")
 
     def test_list_jobs_filters_multiple_statuses(self) -> None:
         self._write_job("incoming", "job-queued", source_url="https://example.com/queued")
@@ -134,6 +146,21 @@ class JobManagerTests(unittest.TestCase):
         self.assertIn("Structured headline", result.normalized_markdown or "")
         self.assertEqual(result.insight_brief["hero"]["title"], "Structured headline")
 
+    def test_get_job_result_exposes_product_view(self) -> None:
+        self._write_processed_job("job-product-view", include_product_view=True)
+
+        result = self.manager.get_job_result("job-product-view")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        product_view = result.structured_result.get("product_view")
+        self.assertIsInstance(product_view, dict)
+        assert isinstance(product_view, dict)
+        self.assertEqual(product_view["hero"]["title"], "Product view hero")
+        self.assertEqual(product_view["sections"][0]["blocks"][0]["text"], "Product-view-first paragraph.")
+        payload = result.to_dict()
+        self.assertEqual(payload["structured_result"]["product_view"]["hero"]["title"], "Product view hero")
+
     def test_get_job_result_returns_processing_status_for_unready_jobs(self) -> None:
         self._write_job("processing", "job-processing", source_url="https://example.com/processing")
 
@@ -156,6 +183,34 @@ class JobManagerTests(unittest.TestCase):
         self.assertEqual(card.analysis_state, "processing")
         self.assertIsNone(card.result_card)
 
+    def test_list_result_cards_hides_base_processed_job_when_active_version_exists(self) -> None:
+        self._write_processed_job("job-family", headline="Base headline")
+        self._write_processed_job("job-family--reinterpret-01", headline="Active headline")
+        self._write_active_version_pointer("job-family", "job-family--reinterpret-01")
+
+        result = self.manager.list_result_cards(statuses=["completed"], limit=10)
+
+        job_ids = [item.job_id for item in result.items]
+        self.assertEqual(result.total, 1)
+        self.assertEqual(job_ids, ["job-family--reinterpret-01"])
+        self.assertEqual(result.items[0].result_card["headline"], "Active headline")
+
+    def test_list_result_cards_and_detail_lookup_agree_for_base_job_active_version(self) -> None:
+        self._write_processed_job("job-family", headline="Base headline")
+        self._write_processed_job("job-family--reinterpret-01", headline="Active headline")
+        self._write_active_version_pointer("job-family", "job-family--reinterpret-01")
+
+        list_result = self.manager.list_result_cards(statuses=["completed"], limit=10)
+        detail_result = self.manager.get_job_result("job-family")
+
+        self.assertEqual(list_result.total, 1)
+        self.assertIsNotNone(detail_result)
+        assert detail_result is not None
+        card = list_result.items[0]
+        self.assertEqual(card.job_id, detail_result.job_id)
+        self.assertEqual(card.title, detail_result.title)
+        self.assertEqual(card.result_card["headline"], detail_result.insight_brief["hero"]["title"])
+
     def test_archive_job_moves_job_to_archived_directory(self) -> None:
         self._write_processed_job("job-completed")
 
@@ -166,6 +221,24 @@ class JobManagerTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertFalse((self.shared_root / "processed" / "job-completed").exists())
         self.assertTrue((self.shared_root / "archived" / "job-completed").exists())
+
+    def test_archive_job_moves_base_directory_when_active_version_exists(self) -> None:
+        self._write_processed_job("job-family", headline="Base headline")
+        self._write_processed_job("job-family--reinterpret-01", headline="Active headline")
+        self._write_active_version_pointer("job-family", "job-family--reinterpret-01")
+
+        result = self.manager.archive_job("job-family")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.status, "completed")
+        self.assertFalse((self.shared_root / "processed" / "job-family").exists())
+        self.assertTrue((self.shared_root / "archived" / "job-family").exists())
+        self.assertTrue((self.shared_root / "processed" / "job-family--reinterpret-01").exists())
+        archived_metadata = json.loads(
+            (self.shared_root / "archived" / "job-family" / "metadata.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(archived_metadata["job_id"], "job-family")
 
     def test_archive_job_returns_none_for_unknown_job(self) -> None:
         result = self.manager.archive_job("missing-job")
@@ -309,7 +382,13 @@ class JobManagerTests(unittest.TestCase):
         if dirname == "failed" and error:
             (job_dir / "error.json").write_text(json.dumps({"message": error}), encoding="utf-8")
 
-    def _write_processed_job(self, job_id: str) -> None:
+    def _write_processed_job(
+        self,
+        job_id: str,
+        *,
+        include_product_view: bool = False,
+        headline: str = "Structured headline",
+    ) -> None:
         job_dir = self.shared_root / "processed" / job_id
         (job_dir / "analysis" / "llm").mkdir(parents=True, exist_ok=True)
         (job_dir / "analysis" / "transcript").mkdir(parents=True, exist_ok=True)
@@ -324,10 +403,10 @@ class JobManagerTests(unittest.TestCase):
         }
         (job_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
         (job_dir / "status.json").write_text(json.dumps({"stage": "completed"}), encoding="utf-8")
-        (job_dir / "normalized.md").write_text("# Structured headline\n\nA readable markdown body.", encoding="utf-8")
+        (job_dir / "normalized.md").write_text(f"# {headline}\n\nA readable markdown body.", encoding="utf-8")
         structured_result = {
             "summary": {
-                "headline": "Structured headline",
+                "headline": headline,
                 "short_text": "A concise one-line take.",
             },
             "key_points": [
@@ -357,6 +436,30 @@ class JobManagerTests(unittest.TestCase):
             },
             "warnings": [{"message": "Structured warning"}],
         }
+        if include_product_view:
+            structured_result["product_view"] = {
+                "hero": {
+                    "title": "Product view hero",
+                    "dek": "Product view dek",
+                    "bottom_line": "Product view bottom line",
+                },
+                "chips": [
+                    {"label": "Goal", "value": "Analysis"},
+                ],
+                "sections": [
+                    {
+                        "id": "section-1",
+                        "title": "Product Section",
+                        "kind": "analysis",
+                        "priority": 1,
+                        "collapsed_by_default": False,
+                        "blocks": [
+                            {"type": "paragraph", "text": "Product-view-first paragraph."},
+                        ],
+                    }
+                ],
+                "render_hints": {"layout_family": "analysis_brief"},
+            }
         normalized = {
             "job_id": job_id,
             "status": "success",
@@ -366,7 +469,7 @@ class JobManagerTests(unittest.TestCase):
                 "source_url": "https://example.com/completed",
                 "canonical_url": "https://example.com/completed",
                 "content_shape": "article",
-                "title": "Structured headline",
+                "title": headline,
                 "author": "Author",
                 "published_at": "2026-03-25T12:00:00",
                 "result": structured_result,
@@ -416,6 +519,18 @@ class JobManagerTests(unittest.TestCase):
                         {"end": 3},
                         {"end": 4},
                     ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_active_version_pointer(self, base_job_id: str, active_job_id: str) -> None:
+        base_dir = self.shared_root / "processed" / base_job_id
+        (base_dir / "active_version.json").write_text(
+            json.dumps(
+                {
+                    "active_job_id": active_job_id,
+                    "version_ids": [base_job_id, active_job_id],
                 }
             ),
             encoding="utf-8",

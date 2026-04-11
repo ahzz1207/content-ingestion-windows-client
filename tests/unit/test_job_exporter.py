@@ -35,6 +35,7 @@ class JobExporterTests(unittest.TestCase):
             shared_root=self.shared_root,
             content_type="html",
             platform="generic",
+            requested_mode="guide",
             collection_mode="browser",
             browser_channel="msedge",
             profile_slug="wechat",
@@ -90,6 +91,7 @@ class JobExporterTests(unittest.TestCase):
         self.assertEqual(metadata["collector"], "windows-client")
         self.assertEqual(metadata["content_type"], "html")
         self.assertEqual(metadata["platform"], "wechat")
+        self.assertEqual(metadata["requested_mode"], "guide")
         self.assertEqual(metadata["final_url"], "https://example.com/final-article")
         self.assertEqual(metadata["collection_mode"], "browser")
         self.assertEqual(metadata["browser_channel"], "msedge")

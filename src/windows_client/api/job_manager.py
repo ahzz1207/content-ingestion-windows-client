@@ -50,6 +50,7 @@ class JobManager:
         content_type: str | None = None,
         platform: str | None = None,
         video_download_mode: str | None = None,
+        requested_mode: str = "auto",
     ) -> IngestedJob:
         resolved_video_download_mode = video_download_mode if video_download_mode is not None else "audio"
         result = self.service.export_url_job(
@@ -57,6 +58,7 @@ class JobManager:
             shared_root=self.shared_inbox_root,
             content_type=content_type,
             platform=platform,
+            requested_mode=requested_mode,
             video_download_mode=resolved_video_download_mode,
         )
         metadata = self._read_json(result.metadata_path)
@@ -66,6 +68,7 @@ class JobManager:
             source_url=str(metadata.get("source_url") or url),
             content_type=str(metadata.get("content_type") or content_type or "html"),
             platform=str(metadata.get("platform") or platform or "generic"),
+            requested_mode=self._coerce_text(metadata.get("requested_mode")) or "auto",
             created_at=self._coerce_text(metadata.get("collected_at")),
             job_dir=result.job_dir,
             payload_path=result.payload_path,
@@ -77,7 +80,7 @@ class JobManager:
         for status in ("queued", "processing", "completed", "failed", "archived"):
             job_dir = self.shared_inbox_root / STATUS_TO_DIR[status] / job_id
             if job_dir.exists() and job_dir.is_dir():
-                return self._load_job_record(job_dir=job_dir, status=status)
+                return self._load_job_record(job_dir=self._resolve_job_dir(job_dir=job_dir, status=status), status=status)
         return None
 
     def archive_job(self, job_id: str) -> JobRecord | None:
@@ -88,7 +91,10 @@ class JobManager:
             return record
         archive_root = self.shared_inbox_root / "archived"
         archive_root.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(record.job_dir), str(archive_root / job_id))
+        source_dir = self.shared_inbox_root / STATUS_TO_DIR[record.status] / job_id
+        if not source_dir.exists() or not source_dir.is_dir():
+            source_dir = record.job_dir
+        shutil.move(str(source_dir), str(archive_root / job_id))
         return record
 
     def list_jobs(self, *, statuses: list[str] | None = None, limit: int = 20) -> JobListResult:
@@ -137,6 +143,7 @@ class JobManager:
 
     def _list_job_records(self, *, statuses: list[str]) -> list[JobRecord]:
         records: list[JobRecord] = []
+        seen_job_ids: set[str] = set()
         for status in statuses:
             dirname = STATUS_TO_DIR.get(status)
             if not dirname:
@@ -146,9 +153,29 @@ class JobManager:
                 continue
             for job_dir in status_root.iterdir():
                 if job_dir.is_dir():
-                    records.append(self._load_job_record(job_dir=job_dir, status=status))
+                    resolved_job_dir = self._resolve_job_dir(job_dir=job_dir, status=status)
+                    if status == "completed" and resolved_job_dir.name in seen_job_ids:
+                        continue
+                    records.append(self._load_job_record(job_dir=resolved_job_dir, status=status))
+                    if status == "completed":
+                        seen_job_ids.add(resolved_job_dir.name)
         records.sort(key=lambda item: item.updated_at or "", reverse=True)
         return records
+
+    def _resolve_job_dir(self, *, job_dir: Path, status: str) -> Path:
+        if status != "completed":
+            return job_dir
+        active_version_path = job_dir / "active_version.json"
+        if not active_version_path.exists():
+            return job_dir
+        active_version = self._read_json(active_version_path)
+        active_job_id = self._coerce_text(active_version.get("active_job_id"))
+        if not active_job_id:
+            return job_dir
+        active_job_dir = job_dir.parent / active_job_id
+        if active_job_dir.exists() and active_job_dir.is_dir():
+            return active_job_dir
+        return job_dir
 
     def _load_job_record(self, *, job_dir: Path, status: str) -> JobRecord:
         metadata_path = job_dir / "metadata.json"
@@ -236,6 +263,9 @@ class JobManager:
         metadata = self._source_metadata(entry)
         normalized_markdown = self._read_text(entry.normalized_md_path)
         structured_result = self._coerce_dict(entry.details.get("structured_result"))
+        product_view = self._coerce_dict(entry.details.get("product_view"))
+        if product_view and not structured_result.get("product_view"):
+            structured_result = {**structured_result, "product_view": product_view}
         warnings = self._collect_warnings(entry)
 
         return JobResultDetail(

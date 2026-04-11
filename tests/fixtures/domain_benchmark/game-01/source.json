@@ -1,0 +1,8 @@
+{
+  "id": "game-01",
+  "title": "Fast early-game leveling route for the northern caves",
+  "public_url": "https://example.com/game-01",
+  "expected_reading_goal": "guide",
+  "expected_domain_template": "game_guide",
+  "notes": "Practical game progression guide with ordered steps and caveats."
+}

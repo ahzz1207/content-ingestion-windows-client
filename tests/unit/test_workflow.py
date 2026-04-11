@@ -80,6 +80,22 @@ class WindowsClientWorkflowTests(unittest.TestCase):
         self.service.export_url_job.assert_called_once()
         self.assertEqual(self.service.export_url_job.call_args.kwargs["video_download_mode"], "video")
 
+    def test_export_url_job_defaults_requested_mode_to_auto(self) -> None:
+        self.service.export_url_job = MagicMock(return_value=self.service.export_mock_job(url="https://example.com/article"))
+
+        state = self.workflow.export_url_job(url="https://example.com/article")
+
+        self.assertEqual(state.status, "success")
+        self.assertEqual(self.service.export_url_job.call_args.kwargs["requested_mode"], "auto")
+
+    def test_export_url_job_threads_narrative_requested_mode(self) -> None:
+        self.service.export_url_job = MagicMock(return_value=self.service.export_mock_job(url="https://example.com/article"))
+
+        state = self.workflow.export_url_job(url="https://example.com/article", requested_mode="narrative")
+
+        self.assertEqual(state.status, "success")
+        self.assertEqual(self.service.export_url_job.call_args.kwargs["requested_mode"], "narrative")
+
     def test_browser_login_returns_profile_snapshot(self) -> None:
         profile_dir = self.project_root / "data" / "browser-profiles" / "wechat"
         self.service.browser_collector.open_profile_session.return_value = profile_dir
@@ -118,6 +134,48 @@ class WindowsClientWorkflowTests(unittest.TestCase):
         self.assertEqual(state.error.code, "unexpected_error")
         self.assertEqual(state.error.stage, "workflow")
         self.assertEqual(state.error.cause_type, "RuntimeError")
+
+    def test_save_result_to_library_returns_success_summary(self) -> None:
+        entry = MagicMock()
+        self.service.save_result_to_library = MagicMock(
+            return_value=type(
+                "Saved",
+                (),
+                {
+                    "entry_id": "lib_0001",
+                    "trashed_interpretations": [object()],
+                },
+            )()
+        )
+
+        state = self.workflow.save_result_to_library(entry)
+
+        self.assertEqual(state.operation, "save-result-to-library")
+        self.assertEqual(state.status, "success")
+        self.assertIn("lib_0001", state.summary)
+        self.assertIsNotNone(state.library)
+        self.assertEqual(state.library.entry_id, "lib_0001")
+        self.assertEqual(state.library.trashed_interpretation_count, 1)
+
+    def test_restore_library_interpretation_returns_success_summary(self) -> None:
+        self.service.restore_library_interpretation = MagicMock(
+            return_value=type(
+                "Saved",
+                (),
+                {
+                    "entry_id": "lib_0001",
+                    "trashed_interpretations": [object()],
+                },
+            )()
+        )
+
+        state = self.workflow.restore_library_interpretation("lib_0001", "interp_1")
+
+        self.assertEqual(state.operation, "restore-library-interpretation")
+        self.assertEqual(state.status, "success")
+        self.assertIn("lib_0001", state.summary)
+        self.assertIsNotNone(state.library)
+        self.assertEqual(state.library.entry_id, "lib_0001")
 
 
 if __name__ == "__main__":

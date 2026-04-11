@@ -1,20 +1,33 @@
+import json
 import re
 import shutil
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from windows_client.app.errors import WindowsClientError
+from windows_client.app.library_store import LibraryEntryView, LibraryStore
+from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
 from windows_client import __version__
 from windows_client.collector.base import CollectedArtifact, Collector
 from windows_client.collector.browser import BrowserCollectOptions, BrowserLoginOptions
 from windows_client.collector.html_capture_artifacts import build_html_capture_artifacts
 from windows_client.collector.html_metadata import HtmlMetadataHints, build_video_summary_payload, detect_platform
 from windows_client.collector.wechat_assets import build_wechat_article_artifacts
+from windows_client.app.wsl_bridge import WslBridge
 from windows_client.config.settings import Settings
 from windows_client.job_exporter.exporter import JobExporter
 from windows_client.job_exporter.models import ExportRequest, ExportResult
 from windows_client.video_downloader import YtDlpVideoDownloader
+
+
+@dataclass(slots=True)
+class ReinterpretRequest:
+    job_id: str
+    reading_goal: str
+    domain_template: str
 
 
 class WindowsClientService:
@@ -36,6 +49,8 @@ class WindowsClientService:
         self.browser_collector = browser_collector
         self.exporter = exporter
         self.video_downloader = video_downloader
+        self.wsl_bridge = WslBridge(settings)
+        self.library_store = LibraryStore(shared_root=self.settings.effective_shared_inbox_root)
 
     def doctor(self) -> Iterable[str]:
         shared_root = self.settings.effective_shared_inbox_root
@@ -95,6 +110,7 @@ class WindowsClientService:
         shared_root: Path | None = None,
         content_type: str | None = None,
         platform: str | None = None,
+        requested_mode: str = "auto",
         video_download_mode: str | None = "audio",
         on_progress: Callable[[str], None] | None = None,
     ) -> ExportResult:
@@ -104,11 +120,15 @@ class WindowsClientService:
         self._emit_progress(on_progress, "collecting")
         payload = self.url_collector.collect(url, content_type=content_type, platform=resolved_platform)
         payload = self._attach_wechat_images(payload, url=url)
+        download_profile_dir = self._existing_video_download_profile_dir(
+            url=url,
+            platform=payload.platform if payload.platform != "generic" else detect_platform(url, payload.payload_text),
+        )
         payload, cleanup_dir = self._attach_video_download(
             payload,
             url=url,
             on_progress=on_progress,
-            profile_dir=None,
+            profile_dir=download_profile_dir,
             video_download_mode=video_download_mode,
         )
         request = ExportRequest(
@@ -116,6 +136,7 @@ class WindowsClientService:
             shared_root=resolved_shared_root,
             content_type=payload.content_type,
             platform=resolved_platform,
+            requested_mode=requested_mode,
             video_download_mode=video_download_mode if payload.content_shape == "video" else None,
             collection_mode="http",
         )
@@ -131,6 +152,7 @@ class WindowsClientService:
         url: str,
         shared_root: Path | None = None,
         platform: str | None = None,
+        requested_mode: str = "auto",
         video_download_mode: str | None = "audio",
         profile_dir: Path | None = None,
         browser_channel: str | None = None,
@@ -177,6 +199,7 @@ class WindowsClientService:
             shared_root=resolved_shared_root,
             content_type=payload.content_type,
             platform=resolved_platform,
+            requested_mode=requested_mode,
             video_download_mode=video_download_mode if payload.content_shape == "video" else None,
             collection_mode="browser",
             browser_channel=browser_channel,
@@ -217,6 +240,168 @@ class WindowsClientService:
         self._emit_progress(on_progress, "waiting_for_login")
         return self.browser_collector.open_profile_session(options, completion_waiter=completion_waiter)
 
+    def reinterpret_result(
+        self,
+        request: ReinterpretRequest,
+        *,
+        shared_root: Path | None = None,
+    ) -> ResultWorkspaceEntry:
+        resolved_shared_root = shared_root or self.settings.effective_shared_inbox_root
+        processed_root = resolved_shared_root / "processed"
+        base_job_id = self._reinterpretation_base_job_id(request.job_id)
+        base_dir = processed_root / base_job_id
+        if not base_dir.exists():
+            raise WindowsClientError(
+                "reinterpretation_source_missing",
+                f"processed result not found: {base_job_id}",
+                stage="reinterpretation",
+                details={"job_id": request.job_id, "base_job_id": base_job_id},
+            )
+
+        source_dir = self._reinterpretation_source_dir(processed_root, request.job_id)
+        target_job_id = self._next_reinterpret_job_id(processed_root, base_job_id)
+        reinterpretation_metadata = {
+            "status": "pending_rerun",
+            "source_job_id": base_job_id,
+            "source_version_job_id": source_dir.name,
+            "requested_reading_goal": request.reading_goal,
+            "requested_domain_template": request.domain_template,
+        }
+
+        try:
+            export_result = self._create_reinterpretation_incoming_job(
+                source_dir,
+                shared_root=resolved_shared_root,
+                target_job_id=target_job_id,
+                reinterpretation_metadata=reinterpretation_metadata,
+            )
+            self.wsl_bridge.watch_once(shared_root=resolved_shared_root)
+            target_dir = processed_root / target_job_id
+            if not target_dir.exists():
+                raise WindowsClientError(
+                    "reinterpretation_failed",
+                    f"reinterpretation result could not be loaded: {target_job_id}",
+                    stage="reinterpretation",
+                    details={
+                        "job_id": request.job_id,
+                        "target_job_id": target_job_id,
+                        "incoming_job_dir": str(export_result.job_dir),
+                    },
+                )
+            self._write_active_version(
+                base_dir,
+                processed_root=processed_root,
+                active_job_id=target_job_id,
+            )
+        except OSError as exc:
+            raise WindowsClientError(
+                "reinterpretation_failed",
+                f"failed to create reinterpretation for {base_job_id}",
+                stage="reinterpretation",
+                details={"job_id": request.job_id, "target_job_id": target_job_id},
+                cause=exc,
+            ) from exc
+
+        entry = load_job_result(resolved_shared_root, target_job_id)
+        if entry is None:
+            raise WindowsClientError(
+                "reinterpretation_failed",
+                f"reinterpretation result could not be loaded: {target_job_id}",
+                stage="reinterpretation",
+                details={"job_id": request.job_id, "target_job_id": target_job_id},
+            )
+        return entry
+
+    def save_result_to_library(self, entry: ResultWorkspaceEntry) -> LibraryEntryView:
+        return self.library_store.save_entry(entry)
+
+    def restore_library_interpretation(self, entry_id: str, interpretation_id: str) -> LibraryEntryView:
+        return self.library_store.restore_interpretation(
+            entry_id=entry_id,
+            interpretation_id=interpretation_id,
+        )
+
+    def _create_reinterpretation_incoming_job(
+        self,
+        source_dir: Path,
+        *,
+        shared_root: Path,
+        target_job_id: str,
+        reinterpretation_metadata: dict[str, str],
+    ) -> ExportResult:
+        incoming_dir = shared_root / "incoming" / target_job_id
+        incoming_dir.mkdir(parents=True, exist_ok=False)
+
+        payload_path = self._find_payload_path(source_dir)
+        if payload_path is None:
+            raise WindowsClientError(
+                "reinterpretation_failed",
+                f"reinterpretation source payload missing: {source_dir.name}",
+                stage="reinterpretation",
+                details={"source_dir": str(source_dir)},
+            )
+
+        source_metadata_path = source_dir / "metadata.json"
+        if not source_metadata_path.exists():
+            raise WindowsClientError(
+                "reinterpretation_failed",
+                f"reinterpretation source metadata missing: {source_dir.name}",
+                stage="reinterpretation",
+                details={"source_dir": str(source_dir)},
+            )
+        source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+
+        copied_payload_path = incoming_dir / payload_path.name
+        shutil.copy2(payload_path, copied_payload_path)
+
+        self._copy_capture_artifacts(source_dir, incoming_dir)
+
+        capture_manifest_path = source_dir / "capture_manifest.json"
+        copied_capture_manifest_path = incoming_dir / "capture_manifest.json"
+        if capture_manifest_path.exists():
+            shutil.copy2(capture_manifest_path, copied_capture_manifest_path)
+            capture_manifest = json.loads(copied_capture_manifest_path.read_text(encoding="utf-8"))
+            if isinstance(capture_manifest, dict):
+                capture_manifest["job_id"] = target_job_id
+                copied_capture_manifest_path.write_text(
+                    json.dumps(capture_manifest, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+        metadata = dict(source_metadata)
+        metadata["job_id"] = target_job_id
+        metadata["requested_mode"] = reinterpretation_metadata["requested_reading_goal"]
+        metadata["requested_reading_goal"] = reinterpretation_metadata["requested_reading_goal"]
+        metadata["requested_domain_template"] = reinterpretation_metadata["requested_domain_template"]
+        metadata["domain_template"] = reinterpretation_metadata["requested_domain_template"]
+        metadata["reinterpretation"] = dict(reinterpretation_metadata)
+        metadata_path = incoming_dir / "metadata.json"
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        ready_path = incoming_dir / "READY"
+        ready_path.write_text("", encoding="utf-8")
+        return ExportResult(
+            job_id=target_job_id,
+            job_dir=incoming_dir,
+            payload_path=copied_payload_path,
+            metadata_path=metadata_path,
+            ready_path=ready_path,
+            capture_manifest_path=copied_capture_manifest_path if copied_capture_manifest_path.exists() else None,
+            attachments_dir=(incoming_dir / "attachments") if (incoming_dir / "attachments").exists() else None,
+        )
+
+    def _find_payload_path(self, job_dir: Path) -> Path | None:
+        for suffix in ("html", "txt", "md"):
+            candidate = job_dir / f"payload.{suffix}"
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _copy_capture_artifacts(self, source_dir: Path, target_dir: Path) -> None:
+        source_attachments_dir = source_dir / "attachments"
+        if source_attachments_dir.exists():
+            shutil.copytree(source_attachments_dir, target_dir / "attachments")
+
     def _default_browser_profile_dir(self, url: str, *, platform: str) -> Path | None:
         detected_platform = detect_platform(url)
         if detected_platform != "generic":
@@ -231,6 +416,134 @@ class WindowsClientService:
         if profile_dir is None:
             return None
         return profile_dir.name
+
+    def _existing_video_download_profile_dir(self, *, url: str, platform: str) -> Path | None:
+        resolved_platform = (platform or detect_platform(url)).strip().lower()
+        if resolved_platform != "bilibili":
+            return None
+        profile_dir = self.settings.browser_profiles_dir / "bilibili"
+        if profile_dir.exists():
+            return profile_dir
+        return None
+
+    def _reinterpretation_base_job_id(self, job_id: str) -> str:
+        marker = "--reinterpret-"
+        if marker in job_id:
+            return job_id.split(marker, 1)[0]
+        return job_id
+
+    def _active_processed_source_dir(self, processed_root: Path, base_job_id: str) -> Path:
+        base_dir = processed_root / base_job_id
+        active_version_path = base_dir / "active_version.json"
+        if not active_version_path.exists():
+            return base_dir
+        try:
+            active_job_id = str(json.loads(active_version_path.read_text(encoding="utf-8")).get("active_job_id") or "").strip()
+        except Exception:
+            return base_dir
+        if not active_job_id:
+            return base_dir
+        active_dir = processed_root / active_job_id
+        if active_dir.exists():
+            return active_dir
+        return base_dir
+
+    def _reinterpretation_source_dir(self, processed_root: Path, requested_job_id: str) -> Path:
+        requested_dir = processed_root / requested_job_id
+        if requested_dir.exists():
+            return requested_dir
+        base_job_id = self._reinterpretation_base_job_id(requested_job_id)
+        return self._active_processed_source_dir(processed_root, base_job_id)
+
+    def _next_reinterpret_job_id(self, processed_root: Path, base_job_id: str) -> str:
+        counter = 1
+        while True:
+            candidate = f"{base_job_id}--reinterpret-{counter:02d}"
+            if not (processed_root / candidate).exists():
+                return candidate
+            counter += 1
+
+    def _rewrite_reinterpreted_payloads(
+        self,
+        target_dir: Path,
+        *,
+        target_job_id: str,
+        reinterpretation_metadata: dict[str, str],
+    ) -> None:
+        normalized_path = target_dir / "normalized.json"
+        normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
+        normalized["job_id"] = target_job_id
+        metadata = normalized.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            normalized["metadata"] = metadata
+        self._apply_reinterpretation_metadata(metadata, reinterpretation_metadata)
+
+        asset = normalized.get("asset")
+        if isinstance(asset, dict):
+            asset_metadata = asset.get("metadata")
+            if not isinstance(asset_metadata, dict):
+                asset_metadata = {}
+                asset["metadata"] = asset_metadata
+            self._apply_reinterpretation_metadata(asset_metadata, reinterpretation_metadata)
+        normalized_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        metadata_path = target_dir / "metadata.json"
+        if metadata_path.exists():
+            metadata_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata_payload["job_id"] = target_job_id
+            metadata_payload["requested_mode"] = reinterpretation_metadata["requested_reading_goal"]
+            metadata_payload["domain_template"] = reinterpretation_metadata["requested_domain_template"]
+            metadata_payload["reinterpretation"] = dict(reinterpretation_metadata)
+            metadata_path.write_text(json.dumps(metadata_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        capture_manifest_path = target_dir / "capture_manifest.json"
+        if capture_manifest_path.exists():
+            capture_manifest = json.loads(capture_manifest_path.read_text(encoding="utf-8"))
+            if isinstance(capture_manifest, dict):
+                capture_manifest["job_id"] = target_job_id
+                capture_manifest_path.write_text(json.dumps(capture_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _apply_reinterpretation_metadata(
+        self,
+        metadata: dict[str, object],
+        reinterpretation_metadata: dict[str, str],
+    ) -> None:
+        metadata["reinterpretation"] = dict(reinterpretation_metadata)
+
+    def _write_active_version(
+        self,
+        base_dir: Path,
+        *,
+        processed_root: Path,
+        active_job_id: str,
+    ) -> None:
+        active_version_path = base_dir / "active_version.json"
+        version_ids = [base_dir.name]
+        if active_version_path.exists():
+            try:
+                existing = json.loads(active_version_path.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+            raw_version_ids = existing.get("version_ids")
+            if isinstance(raw_version_ids, list):
+                version_ids = [str(version_id) for version_id in raw_version_ids if str(version_id).strip()]
+                if base_dir.name not in version_ids:
+                    version_ids.insert(0, base_dir.name)
+        if active_job_id not in version_ids:
+            version_ids.append(active_job_id)
+        version_ids = [version_id for version_id in version_ids if (processed_root / version_id).exists()]
+        active_version_path.write_text(
+            json.dumps(
+                {
+                    "active_job_id": active_job_id,
+                    "version_ids": version_ids,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     def _emit_progress(self, callback: Callable[[str], None] | None, stage: str) -> None:
         if callback is not None:

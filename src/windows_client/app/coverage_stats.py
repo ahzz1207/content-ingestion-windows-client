@@ -53,6 +53,10 @@ def compute_coverage(job_dir: Path) -> CoverageStats | None:
     # Count used transcript segments from evidence list
     evidence_segments = request_data.get("evidence_segments")
     if not isinstance(evidence_segments, list):
+        document = request_data.get("document")
+        if isinstance(document, dict):
+            evidence_segments = document.get("evidence_segments")
+    if not isinstance(evidence_segments, list):
         used_segments = 0
         used_duration_ms: int | None = None
     else:
