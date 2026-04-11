@@ -9,7 +9,7 @@ if str(SRC_DIR) not in sys.path:
 
 from windows_client.app.coverage_stats import CoverageStats
 from windows_client.app.evidence_resolver import EvidenceSnippet
-from windows_client.app.insight_brief import adapt_from_structured_result
+from windows_client.app.insight_brief import InsightBriefV2, adapt_from_structured_result
 
 
 def _make_coverage(*, truncated: bool = False) -> CoverageStats:
@@ -47,6 +47,55 @@ def _make_result(**overrides) -> dict:
     return base
 
 
+def _make_question_driven_result(
+    *,
+    summary: dict | None = None,
+    key_points: list[dict] | None = None,
+    hero: dict | None = None,
+    sections: list[dict] | None = None,
+) -> dict:
+    return {
+        "summary": summary or {"headline": "Legacy headline", "short_text": "Legacy summary."},
+        "key_points": key_points if key_points is not None else [{"title": "Legacy key point", "details": "Legacy detail."}],
+        "product_view": {
+            "hero": {
+                "title": "Question-driven title",
+                "dek": "Question-driven conclusion.",
+                "bottom_line": "This matters because it lowers the barrier.",
+                **(hero or {}),
+            },
+            "sections": sections
+            if sections is not None
+            else [
+                {
+                    "id": "q1",
+                    "title": "核心问题是什么？",
+                    "kind": "question_block",
+                    "priority": 1,
+                    "blocks": [{"type": "bullet_list", "items": ["结论 A", "结论 B"]}],
+                },
+                {
+                    "id": "reader-value",
+                    "title": "这对我意味着什么？",
+                    "kind": "reader_value",
+                    "priority": 2,
+                    "blocks": [{"type": "bullet_list", "items": ["值得持续关注"]}],
+                },
+            ],
+        },
+    }
+
+
+def _adapt_brief(
+    result: dict,
+    evidence_index: dict[str, EvidenceSnippet] | None = None,
+    coverage: CoverageStats | None = None,
+) -> InsightBriefV2:
+    brief = adapt_from_structured_result(result, evidence_index or {}, coverage)
+    assert brief is not None
+    return brief
+
+
 class TestAdaptFromStructuredResult(unittest.TestCase):
     def test_adapt_returns_none_for_empty_result(self) -> None:
         self.assertIsNone(adapt_from_structured_result(None, {}, None))
@@ -57,14 +106,12 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
         self.assertIsNone(adapt_from_structured_result(result, {}, None))
 
     def test_adapt_maps_summary_to_hero(self) -> None:
-        brief = adapt_from_structured_result(_make_result(), {}, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(_make_result())
         self.assertEqual(brief.hero.title, "Test Headline")
         self.assertEqual(brief.hero.one_sentence_take, "One sentence summary.")
 
     def test_adapt_merges_all_viewpoint_sources(self) -> None:
-        brief = adapt_from_structured_result(_make_result(), {}, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(_make_result())
         kinds = [v.kind for v in brief.viewpoints]
         self.assertIn("key_point", kinds)
         self.assertIn("analysis", kinds)
@@ -73,34 +120,29 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
     def test_adapt_all_key_points_present(self) -> None:
         result = _make_result()
         result["key_points"] = [{"title": f"Point {i}", "details": f"Detail {i}"} for i in range(5)]
-        brief = adapt_from_structured_result(result, {}, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(result)
         self.assertEqual(len(brief.quick_takeaways), 5)
 
     def test_adapt_passes_coverage_through(self) -> None:
         cov = _make_coverage(truncated=True)
-        brief = adapt_from_structured_result(_make_result(), {}, cov)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(_make_result(), coverage=cov)
         self.assertIs(brief.coverage, cov)
         self.assertTrue(brief.coverage.input_truncated)
 
     def test_adapt_collects_gaps_from_synthesis(self) -> None:
-        brief = adapt_from_structured_result(_make_result(), {}, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(_make_result())
         self.assertIn("Q1", brief.gaps)
         self.assertIn("Q2", brief.gaps)
         self.assertIn("Step 1", brief.gaps)
 
     def test_adapt_captures_synthesis_conclusion(self) -> None:
-        brief = adapt_from_structured_result(_make_result(), {}, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(_make_result())
         self.assertEqual(brief.synthesis_conclusion, "Overall conclusion.")
 
     def test_adapt_synthesis_conclusion_none_when_missing(self) -> None:
         result = _make_result()
         result["synthesis"] = {"final_answer": "", "open_questions": [], "next_steps": []}
-        brief = adapt_from_structured_result(result, {}, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(result)
         self.assertIsNone(brief.synthesis_conclusion)
 
     def test_adapt_resolves_evidence_refs(self) -> None:
@@ -109,8 +151,7 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
         }
         result = _make_result()
         result["key_points"][0]["evidence_segment_ids"] = ["ev-1"]
-        brief = adapt_from_structured_result(result, index, None)
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(result, index)
         kp_viewpoints = [v for v in brief.viewpoints if v.kind == "key_point"]
         self.assertTrue(any(len(v.evidence_refs) > 0 for v in kp_viewpoints))
 
@@ -142,9 +183,7 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
             "ev-2": EvidenceSnippet("ev-2", "Evidence two", 1000, 2000, "transcript"),
         }
 
-        brief = adapt_from_structured_result(result, index, None)
-
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(result, index)
         self.assertEqual(brief.hero.title, "Core summary from editorial.")
         self.assertEqual(brief.synthesis_conclusion, "Bottom line from editorial.")
         self.assertEqual(brief.quick_takeaways, ["Point A", "Point B"])
@@ -169,9 +208,7 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
             },
         }
 
-        brief = adapt_from_structured_result(result, {}, None)
-
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(result)
         self.assertTrue(any(v.statement == "Step one" for v in brief.viewpoints))
         self.assertTrue(any(v.statement == "Tip one" for v in brief.viewpoints))
 
@@ -191,11 +228,88 @@ class TestAdaptFromStructuredResult(unittest.TestCase):
             },
         }
 
-        brief = adapt_from_structured_result(result, {}, None)
-
-        self.assertIsNotNone(brief)
+        brief = _adapt_brief(result)
         self.assertTrue(any(v.statement == "Highlight one" for v in brief.viewpoints))
         self.assertIn("Reservation one", brief.gaps)
+
+    def test_adapt_prefers_product_view_hero_fields_over_legacy_summary_values(self) -> None:
+        result = _make_question_driven_result(
+            summary={"headline": "Legacy headline", "short_text": "Legacy summary."},
+            hero={"title": "Preferred product title", "dek": "Preferred product dek."},
+        )
+
+        brief = _adapt_brief(result)
+        self.assertEqual(brief.hero.title, "Preferred product title")
+        self.assertEqual(brief.hero.one_sentence_take, "Preferred product dek.")
+
+    def test_adapt_prefers_product_view_question_blocks_for_quick_takeaways(self) -> None:
+        result = _make_question_driven_result()
+
+        brief = _adapt_brief(result)
+        self.assertEqual(brief.hero.title, "Question-driven title")
+        self.assertEqual(brief.hero.one_sentence_take, "Question-driven conclusion.")
+        self.assertEqual(brief.quick_takeaways, ["核心问题是什么？"])
+        self.assertNotIn("Legacy key point", brief.quick_takeaways)
+
+    def test_adapt_caps_question_block_quick_takeaways_at_three(self) -> None:
+        result = _make_question_driven_result(
+            sections=[
+                {
+                    "id": "q1",
+                    "title": "Question 1",
+                    "kind": "question_block",
+                    "priority": 1,
+                    "blocks": [{"type": "bullet_list", "items": ["Answer 1"]}],
+                },
+                {
+                    "id": "q2",
+                    "title": "Question 2",
+                    "kind": "question_block",
+                    "priority": 2,
+                    "blocks": [{"type": "bullet_list", "items": ["Answer 2"]}],
+                },
+                {
+                    "id": "q3",
+                    "title": "Question 3",
+                    "kind": "question_block",
+                    "priority": 3,
+                    "blocks": [{"type": "bullet_list", "items": ["Answer 3"]}],
+                },
+                {
+                    "id": "q4",
+                    "title": "Question 4",
+                    "kind": "question_block",
+                    "priority": 4,
+                    "blocks": [{"type": "bullet_list", "items": ["Answer 4"]}],
+                },
+            ]
+        )
+
+        brief = _adapt_brief(result)
+        self.assertEqual(brief.quick_takeaways, ["Question 1", "Question 2", "Question 3"])
+
+    def test_adapt_uses_product_view_bottom_line_as_synthesis_conclusion(self) -> None:
+        result = _make_question_driven_result()
+
+        brief = _adapt_brief(result)
+        self.assertEqual(brief.synthesis_conclusion, "This matters because it lowers the barrier.")
+
+    def test_adapt_uses_reader_value_fallback_for_quick_takeaways(self) -> None:
+        result = _make_question_driven_result(
+            hero={"title": "Reader value title", "dek": "Reader value summary.", "bottom_line": None},
+            sections=[
+                {
+                    "id": "reader-value",
+                    "title": "Why this matters to readers",
+                    "kind": "reader_value",
+                    "priority": 1,
+                    "blocks": [{"type": "bullet_list", "items": ["Useful fallback bullet"]}],
+                },
+            ],
+        )
+
+        brief = _adapt_brief(result)
+        self.assertEqual(brief.quick_takeaways, ["Why this matters to readers"])
 
 
 if __name__ == "__main__":

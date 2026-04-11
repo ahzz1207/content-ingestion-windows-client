@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from windows_client.app.errors import WindowsClientError
+from windows_client.app.library_store import LibraryEntryView, LibraryStore
 from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
 from windows_client import __version__
 from windows_client.collector.base import CollectedArtifact, Collector
@@ -49,6 +50,7 @@ class WindowsClientService:
         self.exporter = exporter
         self.video_downloader = video_downloader
         self.wsl_bridge = WslBridge(settings)
+        self.library_store = LibraryStore(shared_root=self.settings.effective_shared_inbox_root)
 
     def doctor(self) -> Iterable[str]:
         shared_root = self.settings.effective_shared_inbox_root
@@ -118,11 +120,15 @@ class WindowsClientService:
         self._emit_progress(on_progress, "collecting")
         payload = self.url_collector.collect(url, content_type=content_type, platform=resolved_platform)
         payload = self._attach_wechat_images(payload, url=url)
+        download_profile_dir = self._existing_video_download_profile_dir(
+            url=url,
+            platform=payload.platform if payload.platform != "generic" else detect_platform(url, payload.payload_text),
+        )
         payload, cleanup_dir = self._attach_video_download(
             payload,
             url=url,
             on_progress=on_progress,
-            profile_dir=None,
+            profile_dir=download_profile_dir,
             video_download_mode=video_download_mode,
         )
         request = ExportRequest(
@@ -306,6 +312,15 @@ class WindowsClientService:
             )
         return entry
 
+    def save_result_to_library(self, entry: ResultWorkspaceEntry) -> LibraryEntryView:
+        return self.library_store.save_entry(entry)
+
+    def restore_library_interpretation(self, entry_id: str, interpretation_id: str) -> LibraryEntryView:
+        return self.library_store.restore_interpretation(
+            entry_id=entry_id,
+            interpretation_id=interpretation_id,
+        )
+
     def _create_reinterpretation_incoming_job(
         self,
         source_dir: Path,
@@ -401,6 +416,15 @@ class WindowsClientService:
         if profile_dir is None:
             return None
         return profile_dir.name
+
+    def _existing_video_download_profile_dir(self, *, url: str, platform: str) -> Path | None:
+        resolved_platform = (platform or detect_platform(url)).strip().lower()
+        if resolved_platform != "bilibili":
+            return None
+        profile_dir = self.settings.browser_profiles_dir / "bilibili"
+        if profile_dir.exists():
+            return profile_dir
+        return None
 
     def _reinterpretation_base_job_id(self, job_id: str) -> str:
         marker = "--reinterpret-"

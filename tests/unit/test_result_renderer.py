@@ -10,6 +10,7 @@ if str(SRC_DIR) not in sys.path:
 from PySide6.QtWidgets import QApplication
 
 from windows_client.gui.result_renderer import (
+    PREVIEW_STYLESHEET,
     _coverage_warning_html,
     _markdown_filename,
     _preview_html,
@@ -156,7 +157,7 @@ def _argument_product_view_entry() -> object:
             "asset": {
                 "result": {
                     "product_view": {
-                        "layout": "review_curation",
+                        "layout": "analysis_brief",
                         "hero": {
                             "title": "Policy claim is plausible but operationally weak",
                             "dek": "The article makes a case for direction, not for delivery readiness.",
@@ -206,6 +207,47 @@ def _argument_product_view_entry() -> object:
     return entry
 
 
+def _question_driven_analysis_product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "layout": "analysis_brief",
+                        "hero": {
+                            "title": "先回答你真正会问的问题",
+                            "dek": "把分析改写成读者更容易扫描的问答式结构。",
+                            "bottom_line": "重点不是分类卡片，而是按阅读问题组织判断。",
+                        },
+                        "sections": [
+                            {
+                                "id": "question-1",
+                                "title": "它解决了什么问题？",
+                                "kind": "question_block",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "paragraph", "text": "它先界定问题，再说明为什么值得关心。"}],
+                            },
+                            {
+                                "id": "reader-value-1",
+                                "title": "这对我意味着什么？",
+                                "kind": "reader_value",
+                                "priority": 2,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "bullet_list", "items": ["先看是否影响你的判断", "再决定要不要继续深读"]}],
+                            },
+                        ],
+                        "render_hints": {"layout_family": "analysis_brief"},
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "argument"}},
+        }
+    }
+    return entry
+
+
 def _guide_product_view_entry() -> object:
     entry = _make_entry()
     entry.details = {
@@ -213,7 +255,7 @@ def _guide_product_view_entry() -> object:
             "asset": {
                 "result": {
                     "product_view": {
-                        "layout": "narrative_digest",
+                        "layout": "practical_guide",
                         "hero": {
                             "title": "一句话先看完",
                             "dek": "保留最关键的结论即可。",
@@ -243,6 +285,45 @@ def _guide_product_view_entry() -> object:
                                 "priority": 3,
                                 "collapsed_by_default": False,
                                 "blocks": [{"type": "paragraph", "text": "真正改变判断的是最后一个结论。"}],
+                            },
+                        ],
+                        "render_hints": {"layout_family": "practical_guide"},
+                    }
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": "guide"}},
+        }
+    }
+    return entry
+
+
+def _render_hints_only_guide_product_view_entry() -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": {
+                        "hero": {
+                            "title": "Guide hero",
+                            "dek": "Guide dek",
+                        },
+                        "sections": [
+                            {
+                                "id": "actions",
+                                "title": "推荐步骤",
+                                "kind": "actions",
+                                "priority": 1,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "step_list", "items": ["先核对时间线", "再看财报"]}],
+                            },
+                            {
+                                "id": "risks",
+                                "title": "常见误区",
+                                "kind": "risks",
+                                "priority": 2,
+                                "collapsed_by_default": False,
+                                "blocks": [{"type": "warning_list", "items": ["不要把相关性当因果"]}],
                             },
                         ],
                         "render_hints": {"layout_family": "practical_guide"},
@@ -466,6 +547,57 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
         self.assertIn("张力与漏洞", html)
         self.assertNotIn("一句话总结", html)
 
+    def test_question_driven_analysis_sections_render_literal_titles_as_headings(self) -> None:
+        entry = _question_driven_analysis_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="argument")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("analysis-brief-layout", html)
+        self.assertIn("先回答你真正会问的问题", html)
+        self.assertIn("把分析改写成读者更容易扫描的问答式结构。", html)
+        self.assertIn("重点不是分类卡片，而是按阅读问题组织判断。", html)
+        self.assertIn("<h2>它解决了什么问题？</h2>", html)
+        self.assertIn("<h2>这对我意味着什么？</h2>", html)
+        self.assertEqual(html.count("analysis-section-label"), 0)
+        self.assertEqual(html.count("analysis-card-grid"), 0)
+
+    def test_reader_value_analysis_sections_do_not_relabel_to_legacy_argument_buckets(self) -> None:
+        entry = _question_driven_analysis_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="argument")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertNotIn("核心判断", html)
+        self.assertNotIn("主要论点", html)
+        self.assertNotIn("analysis-section-label", html)
+
+    def test_legacy_analysis_brief_sections_keep_badge_and_card_grid_presentation(self) -> None:
+        entry = _argument_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="argument")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("analysis-section-label", html)
+        self.assertIn("analysis-card-grid", html)
+        self.assertIn("核心判断", html)
+        self.assertIn("主要论点", html)
+
+    def test_explicit_layout_wins_over_conflicting_render_hints_layout_family(self) -> None:
+        entry = _product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="review")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("review-curation-layout", html)
+        self.assertIn("review-curation-hero", html)
+        self.assertNotIn("analysis-brief-layout", html)
+        self.assertNotIn("analysis-hero", html)
+
     def test_guide_product_view_renders_as_compact_takeaway_not_analysis_brief(self) -> None:
         entry = _guide_product_view_entry()
 
@@ -479,6 +611,17 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
         self.assertIn("核心要点", html)
         self.assertIn("记住这件事", html)
         self.assertNotIn("关键论据", html)
+
+    def test_product_view_uses_render_hints_layout_family_for_guide_detection(self) -> None:
+        entry = _render_hints_only_guide_product_view_entry()
+
+        html = _structured_preview_html(entry, resolved_mode="guide")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("guide-digest-layout", html)
+        self.assertIn("Guide hero", html)
+        self.assertIn("推荐步骤", html)
 
     def test_review_product_view_renders_as_curated_recommendation_layout(self) -> None:
         entry = _review_product_view_entry()
@@ -505,6 +648,31 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
         self.assertIn("Story beats", html)
         self.assertIn("Themes", html)
         self.assertIn("Takeaway", html)
+
+    def test_preview_stylesheet_supports_editorial_serif_body_typography(self) -> None:
+        self.assertIn("Noto Serif SC", PREVIEW_STYLESHEET)
+        self.assertIn("serif", PREVIEW_STYLESHEET.lower())
+
+    def test_preview_stylesheet_supports_v4_editorial_reading_surface(self) -> None:
+        self.assertIn(".result-hero", PREVIEW_STYLESHEET)
+        self.assertIn("box-shadow", PREVIEW_STYLESHEET)
+        self.assertIn("border-radius: 24px", PREVIEW_STYLESHEET)
+
+    def test_coverage_warning_html_uses_chinese_product_copy(self) -> None:
+        class _FakeCoverage:
+            input_truncated = True
+            coverage_ratio = 0.5
+            used_segments = 3
+            total_segments = 6
+
+        entry = _make_entry()
+        entry.details = {"coverage": _FakeCoverage()}
+
+        html = _coverage_warning_html(entry)
+
+        self.assertIn("覆盖范围提示", html)
+        self.assertIn("50%", html)
+        self.assertIn("3/6", html)
 
 
 class TestResolvedEvidenceHtmlUsesAllRefs(unittest.TestCase):
@@ -599,7 +767,7 @@ class TestEntryToMarkdown(unittest.TestCase):
         entry = _make_entry(title=None, summary="")
         entry.details = {}
         md = entry_to_markdown(entry)
-        self.assertIn("# Untitled", md)
+        self.assertIn("# 未命名结果", md)
 
     def test_empty_sections_omitted(self) -> None:
         class _MinimalBrief:
@@ -615,9 +783,9 @@ class TestEntryToMarkdown(unittest.TestCase):
         entry = _make_entry()
         entry.details = {"insight_brief": _MinimalBrief()}
         md = entry_to_markdown(entry)
-        self.assertNotIn("## Key Points", md)
-        self.assertNotIn("## Bottom Line", md)
-        self.assertNotIn("## Questions", md)
+        self.assertNotIn("## 要点提炼", md)
+        self.assertNotIn("## 核心结论", md)
+        self.assertNotIn("## 问题", md)
 
 
 class TestEntryToMarkdownVisualFindings(unittest.TestCase):
@@ -630,7 +798,7 @@ class TestEntryToMarkdownVisualFindings(unittest.TestCase):
             ]
         }
         md = entry_to_markdown(entry)
-        self.assertIn("Visual Evidence", md)
+        self.assertIn("视觉证据", md)
         self.assertIn("Speaker points at map", md)
         self.assertIn("Chart displayed", md)
 
@@ -638,7 +806,7 @@ class TestEntryToMarkdownVisualFindings(unittest.TestCase):
         entry = _make_entry()
         entry.details = {"visual_findings": []}
         md = entry_to_markdown(entry)
-        self.assertNotIn("Visual Evidence", md)
+        self.assertNotIn("视觉证据", md)
 
 
 class TestMarkdownFilename(unittest.TestCase):

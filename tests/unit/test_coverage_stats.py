@@ -104,6 +104,49 @@ class TestComputeCoverage(unittest.TestCase):
         # Only the transcript segment counts
         self.assertEqual(result.used_segments, 1)
 
+    def test_counts_transcript_entries_with_distinct_time_ranges(self) -> None:
+        segments = [self._make_transcript_segment(i, i + 1) for i in range(3)]
+        self._write_transcript(segments)
+        evidence = [
+            {"id": "seg-a", "text": "first", "kind": "transcript", "start_ms": 0, "end_ms": 1000},
+            {"id": "seg-b", "text": "third", "kind": "transcript", "start_ms": 2000, "end_ms": 3000},
+        ]
+        self._write_request(evidence)
+
+        result = compute_coverage(self.job_dir)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.total_segments, 3)
+        self.assertEqual(result.used_segments, 2)
+        self.assertAlmostEqual(result.coverage_ratio, 2 / 3)
+
+    def test_reads_evidence_segments_from_document_payload(self) -> None:
+        segments = [self._make_transcript_segment(i, i + 1) for i in range(4)]
+        self._write_transcript(segments)
+        path = self.job_dir / "analysis" / "llm"
+        path.mkdir(parents=True)
+        (path / "text_request.json").write_text(
+            json.dumps(
+                {
+                    "document": {
+                        "evidence_segments": [
+                            {"id": "seg-a", "text": "first", "kind": "transcript", "start_ms": 0, "end_ms": 1000},
+                            {"id": "seg-b", "text": "second", "kind": "transcript", "start_ms": 1000, "end_ms": 2000},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = compute_coverage(self.job_dir)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.used_segments, 2)
+        self.assertAlmostEqual(result.coverage_ratio, 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

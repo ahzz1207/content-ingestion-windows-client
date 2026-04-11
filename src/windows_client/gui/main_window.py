@@ -38,6 +38,7 @@ from windows_client.app.view_models import OperationViewState
 from windows_client.app.workflow import WindowsClientWorkflow
 from windows_client.app.wsl_bridge import WslBridge
 from windows_client.gui.inline_result_view import InlineResultView
+from windows_client.gui.library_panel import LibraryDialog
 from windows_client.gui.platform_router import PlatformRoute, resolve_platform_route
 from windows_client.gui.refresh_policy import RefreshGate
 from windows_client.gui.result_renderer import (  # re-exported for test compatibility
@@ -67,6 +68,8 @@ STAGE_LABELS = {
     "done": "完成",
     "failed": "处理失败",
 }
+
+SAVE_TO_LIBRARY_FAILURE_MESSAGE = "无法保存到知识库。请稍后重试。"
 
 RESULT_REFRESH_INTERVAL_SECONDS = 2.0
 AUTO_RESULT_POLL_INTERVAL_MS = 3000        # first 60s: fast
@@ -403,6 +406,7 @@ class MainWindow(QMainWindow):
         self._current_url: str = ""
         self._current_state: OperationViewState | None = None
         self._latest_result_entry: ResultWorkspaceEntry | None = None
+        self._library_dialog: LibraryDialog | None = None
         self._watcher_running: bool | None = None  # cached from last status refresh
         self._result_poll_timer = QTimer(self)
         self._result_poll_timer.setSingleShot(True)
@@ -463,6 +467,9 @@ class MainWindow(QMainWindow):
         self.result_inline.new_url_button.clicked.connect(self._reset_to_ready_state)
         self.result_inline.reanalyze_requested.connect(self._reanalyze_url)
         self.result_inline.reinterpret_requested.connect(self._prompt_reinterpretation)
+        self.result_inline.save_to_library_requested.connect(self._save_latest_result_to_library)
+        self.result_inline.open_library_requested.connect(self._open_library)
+        self.result_inline.open_library_entry_requested.connect(self._open_library_entry)
         self.result_inline.history_button.clicked.connect(self._open_history_from_result)
         self.stack.addWidget(self.ready_page)
         self.stack.addWidget(self.task_page)
@@ -530,10 +537,15 @@ class MainWindow(QMainWindow):
         self.latest_result_button.setObjectName("GhostButton")
         self.latest_result_button.clicked.connect(self._open_latest_result)
         self.latest_result_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.library_button = QPushButton("知识库")
+        self.library_button.setObjectName("GhostButton")
+        self.library_button.clicked.connect(self._open_library)
+        self.library_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         actions = QHBoxLayout()
         actions.addWidget(self.start_button)
         actions.addWidget(self.latest_result_button)
+        actions.addWidget(self.library_button)
         actions.addStretch(1)
 
         hint = QLabel("Known platforms are routed automatically. Login guidance appears only when needed.")
@@ -662,82 +674,82 @@ class MainWindow(QMainWindow):
             QMainWindow {
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 1, y2: 1,
-                    stop: 0 #f5ede3,
-                    stop: 0.48 #eef1f4,
-                    stop: 1 #e4e8ee
+                    stop: 0 #eef3f9,
+                    stop: 0.5 #f7f4ee,
+                    stop: 1 #ece4d7
                 );
                 font-family: __UI_FONT_STACK__;
-                color: #16202b;
+                color: #152133;
             }
             #WindowTitle {
                 font-size: 38px;
                 font-weight: 700;
-                color: #16202b;
+                color: #152133;
             }
             #HeroText {
                 font-size: 36px;
                 font-weight: 600;
-                color: #16202b;
+                color: #152133;
             }
             #ResultTitle {
-                font-size: 31px;
-                font-weight: 560;
-                color: #16202b;
+                font-size: 28px;
+                font-weight: 620;
+                color: #152133;
             }
             #BylineText {
                 font-size: 15px;
                 font-weight: 600;
-                color: #2f4558;
+                color: #40526a;
             }
             #EyebrowText {
                 font-size: 12px;
                 font-weight: 700;
-                color: #a34b2d;
+                color: #5b6c84;
             }
             #CaptionText {
                 font-size: 13px;
-                color: #6b7280;
+                color: #6a7484;
             }
             #DomainText {
                 font-size: 16px;
-                color: #6b7280;
+                color: #6a7484;
             }
             #StageText {
                 font-size: 17px;
                 font-weight: 600;
-                color: #16202b;
+                color: #152133;
             }
             #SectionLabel {
                 font-size: 12px;
                 font-weight: 700;
-                color: #a34b2d;
+                color: #6a7484;
                 text-transform: uppercase;
-                letter-spacing: 0.06em;
+                letter-spacing: 0.08em;
             }
             #SectionLabelBlue {
                 font-size: 12px;
                 font-weight: 700;
-                color: #2563eb;
+                color: #3a67d6;
                 text-transform: uppercase;
-                letter-spacing: 0.06em;
+                letter-spacing: 0.08em;
             }
             #HeroTake {
-                font-size: 17px;
-                font-weight: 450;
-                color: #16202b;
+                font-size: 18px;
+                font-weight: 430;
+                color: #33465e;
             }
             #TakeawayIndexed {
-                font-size: 15px;
+                font-size: 16px;
                 font-weight: 600;
-                color: #2f4558;
+                color: #1f3765;
             }
             #BodyText {
                 font-size: 15px;
-                color: #2f4558;
+                color: #33465e;
             }
             #SecondaryText {
                 font-size: 14px;
-                color: #6b7280;
+                color: #6a7484;
             }
             #ElapsedText {
                 font-size: 13px;
@@ -753,38 +765,134 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             #HeroCard {
-                background: rgba(255, 251, 247, 0.84);
-                border: 1px solid rgba(172, 139, 108, 0.18);
-                border-radius: 34px;
-            }
-            #TaskCard, #DetailCard {
-                background: rgba(255, 253, 250, 0.84);
-                border: 1px solid rgba(172, 139, 108, 0.16);
-                border-radius: 30px;
-            }
-            #SidebarCard {
-                background: rgba(244, 240, 233, 0.82);
-                border: 1px solid rgba(172, 139, 108, 0.15);
-                border-radius: 26px;
-            }
-            #PreviewCard {
-                background: rgba(248, 243, 236, 0.92);
-                border: 1px solid rgba(172, 139, 108, 0.12);
-                border-radius: 20px;
-            }
-            #BottomLineCard {
-                background: rgba(37, 99, 235, 0.06);
-                border: 1px solid rgba(37, 99, 235, 0.18);
-                border-radius: 14px;
-            }
-            QFrame#InsightCardFrame {
                 background: transparent;
                 border: none;
             }
-            #CoverageBanner {
+            #ImmersiveHero {
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 1,
+                    stop: 0 rgba(214, 226, 247, 0.92),
+                    stop: 0.46 rgba(246, 243, 236, 0.94),
+                    stop: 1 rgba(238, 230, 216, 0.96)
+                );
+                border: 1px solid rgba(255, 255, 255, 0.82);
+                border-radius: 38px;
+            }
+            #HeroTopBar {
+                background: transparent;
+                border: none;
+            }
+            #HeroActionStrip {
+                background: rgba(255, 255, 255, 0.32);
+                border: 1px solid rgba(255, 255, 255, 0.58);
+                border-radius: 22px;
+                padding: 6px;
+            }
+            #HeroMetaRow {
+                background: transparent;
+                border: none;
+            }
+            #HeroCard {
+                background: transparent;
+                border: none;
+                border-radius: 34px;
+            }
+            #SourceHeaderCard {
+                background: rgba(255, 255, 255, 0.88);
+                border: 1px solid rgba(21, 33, 51, 0.06);
+                border-radius: 22px;
+            }
+            #SourceHeaderTitle {
+                font-size: 17px;
+                font-weight: 600;
+                color: #152133;
+            }
+            #ReadingStreamShell {
+                background: transparent;
+                border: none;
+            }
+            #ReadingStream {
+                background: transparent;
+                border: none;
+            }
+            #ContextRailShell {
+                background: rgba(239, 243, 249, 0.52);
+                border-left: 1px solid rgba(21, 33, 51, 0.08);
+                border-top-right-radius: 30px;
+                border-bottom-right-radius: 30px;
+                padding: 18px 0 18px 18px;
+            }
+            #ContextRail {
+                background: rgba(255, 255, 255, 0.58);
+                border: 1px solid rgba(255, 255, 255, 0.74);
+                border-radius: 28px;
+            }
+            #TaskCard, #DetailCard {
+                background: rgba(255, 255, 255, 0.8);
+                border: 1px solid rgba(21, 33, 51, 0.08);
+                border-radius: 30px;
+            }
+            #SidebarCard {
+                background: rgba(255, 255, 255, 0.52);
+                border: 1px solid rgba(255, 255, 255, 0.74);
+                border-radius: 26px;
+            }
+            #PreviewCard {
+                background: rgba(255, 255, 255, 0.78);
+                border: 1px solid rgba(21, 33, 51, 0.08);
+                border-radius: 24px;
+            }
+            #StreamSection {
+                background: rgba(255, 255, 255, 0.42);
+                border: 1px solid rgba(21, 33, 51, 0.05);
+                border-radius: 20px;
+            }
+            #BottomLineCard {
+                background: rgba(58, 103, 214, 0.08);
+                border: 1px solid rgba(58, 103, 214, 0.16);
+                border-radius: 20px;
+            }
+            #ImageSummaryCard {
+                background: rgba(255, 255, 255, 0.84);
+                border: 1px solid rgba(255, 255, 255, 0.78);
+                border-radius: 28px;
+            }
+            #ImageSummaryCard QLabel {
+                background: transparent;
+            }
+            #CoverageBanner, #EditorialWarning {
                 background: rgba(239, 68, 68, 0.10);
                 border: 1px solid rgba(239, 68, 68, 0.24);
-                border-radius: 14px;
+                border-radius: 18px;
+            }
+            #EditorialKeyPoint {
+                background: rgba(255, 255, 255, 0.66);
+                border: 1px solid rgba(21, 33, 51, 0.06);
+                border-radius: 18px;
+                padding: 10px 14px;
+            }
+            #GuideStepItem {
+                background: rgba(255, 255, 255, 0.58);
+                border: 1px solid rgba(21, 33, 51, 0.05);
+                border-radius: 16px;
+                padding: 10px 14px;
+            }
+            #GuideStepIndex {
+                background: rgba(58, 103, 214, 0.10);
+                color: #3a67d6;
+                border-radius: 999px;
+                padding: 4px 10px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            #GuideStepBody {
+                font-size: 15px;
+                font-weight: 600;
+                color: #1f3765;
+            }
+            #GuideStepDetail {
+                font-size: 14px;
+                color: #5d6f86;
             }
             #VerificationCard {
                 background: rgba(255, 255, 255, 0.60);
@@ -816,16 +924,16 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             #TagChip {
-                background: rgba(163, 75, 45, 0.09);
-                color: #8f3f25;
+                background: rgba(58, 103, 214, 0.12);
+                color: #3a67d6;
                 border-radius: 10px;
                 padding: 3px 10px;
                 font-size: 12px;
                 font-weight: 600;
             }
             #TagChipMuted {
-                background: rgba(148, 163, 184, 0.12);
-                color: #475569;
+                background: rgba(255, 255, 255, 0.72);
+                color: #5d6f86;
                 border-radius: 10px;
                 padding: 3px 10px;
                 font-size: 12px;
@@ -844,15 +952,16 @@ class MainWindow(QMainWindow):
             QListWidget#ResultList::item:selected {
                 background: transparent;
                 border: none;
+                color: #152133;
             }
             #UrlInput {
                 min-height: 62px;
                 border-radius: 22px;
-                border: 1px solid rgba(172, 139, 108, 0.22);
+                border: 1px solid rgba(21, 33, 51, 0.12);
                 background: rgba(255, 255, 255, 0.94);
                 padding: 0 22px;
                 font-size: 18px;
-                color: #16202b;
+                color: #152133;
             }
             #PrimaryButton, #GhostButton, QToolButton {
                 min-height: 46px;
@@ -862,22 +971,40 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             #PrimaryButton {
-                background: #16202b;
+                background: #3a67d6;
                 color: white;
-                border: 1px solid rgba(22, 32, 43, 0.08);
+                border: 1px solid rgba(58, 103, 214, 0.08);
             }
             #PrimaryButton:hover {
-                background: #232f3d;
+                background: #4b79dd;
             }
             #GhostButton, QToolButton {
-                background: rgba(255, 255, 255, 0.52);
-                color: #16202b;
-                border: 1px solid rgba(172, 139, 108, 0.16);
+                background: rgba(255, 255, 255, 0.72);
+                color: #152133;
+                border: 1px solid rgba(21, 33, 51, 0.08);
+            }
+            QPushButton[buttonStyle="ghost"] {
+                min-height: 46px;
+                border-radius: 18px;
+                padding: 0 18px;
+                font-size: 14px;
+                font-weight: 600;
+                background: rgba(255, 255, 255, 0.72);
+                color: #152133;
+                border: 1px solid rgba(21, 33, 51, 0.08);
             }
             #GhostButton:hover, QToolButton:hover {
-                background: rgba(255, 248, 242, 0.88);
+                background: rgba(229, 238, 252, 0.88);
+            }
+            QPushButton[buttonStyle="ghost"]:hover {
+                background: rgba(229, 238, 252, 0.88);
             }
             #GhostButton:disabled, #PrimaryButton:disabled {
+                color: #9ca3af;
+                background: rgba(235, 236, 239, 0.92);
+                border: 1px solid rgba(172, 139, 108, 0.12);
+            }
+            QPushButton[buttonStyle="ghost"]:disabled {
                 color: #9ca3af;
                 background: rgba(235, 236, 239, 0.92);
                 border: 1px solid rgba(172, 139, 108, 0.12);
@@ -897,21 +1024,26 @@ class MainWindow(QMainWindow):
                 );
             }
             QTextBrowser {
-                border-radius: 22px;
-                border: 1px solid rgba(172, 139, 108, 0.12);
-                background: rgba(255, 251, 247, 0.92);
-                padding: 20px;
+                border-radius: 26px;
+                border: 1px solid rgba(21, 33, 51, 0.08);
+                background: rgba(255, 255, 255, 0.92);
+                padding: 28px;
                 font-size: 16px;
-                line-height: 1.85;
-                color: #233445;
-                selection-background-color: rgba(163, 75, 45, 0.16);
+                line-height: 1.95;
+                color: #33465e;
+                selection-background-color: rgba(58, 103, 214, 0.16);
+            }
+            QTextBrowser#LibraryInterpretationBrowser {
+                border-radius: 30px;
+                border: 1px solid rgba(21, 33, 51, 0.06);
+                background: rgba(255, 255, 255, 0.96);
             }
             QPlainTextEdit {
                 border-radius: 18px;
-                border: 1px solid rgba(172, 139, 108, 0.12);
-                background: rgba(248, 243, 236, 0.92);
+                border: 1px solid rgba(21, 33, 51, 0.08);
+                background: rgba(255, 255, 255, 0.84);
                 padding: 16px;
-                color: #334155;
+                color: #33465e;
             }
             """
             .replace("__UI_FONT_STACK__", UI_FONT_STACK)
@@ -1200,6 +1332,10 @@ class MainWindow(QMainWindow):
         self._elapsed_label.show()
         self._elapsed_timer.start()
         refresh_state = self._refresh_current_job_result()
+        if refresh_state in {"processed", "failed"}:
+            if refresh_state == "processed" and self._latest_result_entry is not None:
+                self.result_inline.show_update_banner(_result_update_banner_text(self._latest_result_entry))
+            return
         if refresh_state == "processed" and self._latest_result_entry is not None:
             self.result_inline.show_update_banner(_result_update_banner_text(self._latest_result_entry))
         self._start_result_polling()
@@ -1280,6 +1416,40 @@ class MainWindow(QMainWindow):
         self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
         QMessageBox.warning(self, "Reinterpretation failed", message)
 
+    def _save_latest_result_to_library(self) -> None:
+        entry = self._latest_result_entry
+        if entry is None:
+            return
+        if self._task_thread is not None and self._task_thread.isRunning():
+            return
+        self.footer_label.setText("Saving result to knowledge library...")
+        self._task_thread = WorkflowTaskThread(
+            lambda progress: self.workflow.save_result_to_library(entry)
+        )
+        self._task_thread.completed.connect(self._on_save_to_library_completed)
+        self._task_thread.crashed.connect(self._on_save_to_library_crashed)
+        self._task_thread.start()
+
+    def _on_save_to_library_completed(self, state: OperationViewState) -> None:
+        self._task_thread = None
+        if state.status != "success":
+            self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
+            QMessageBox.warning(self, "Save to library failed", SAVE_TO_LIBRARY_FAILURE_MESSAGE)
+            return
+        self.footer_label.setText("Saved to knowledge library.")
+        banner_message = "Source 已保存到知识库，当前 interpretation 已设为默认阅读视图。"
+        if state.library is not None and state.library.trashed_interpretation_count > 0:
+            banner_message += "旧版本仍可在条目内恢复。"
+        self.result_inline.show_library_banner(
+            banner_message,
+            entry_id=state.library.entry_id if state.library is not None else None,
+        )
+
+    def _on_save_to_library_crashed(self, message: str) -> None:
+        self._task_thread = None
+        self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
+        QMessageBox.warning(self, "Save to library failed", SAVE_TO_LIBRARY_FAILURE_MESSAGE)
+
     def _toggle_details(self, visible: bool) -> None:
         self.details_toggle.setText("Hide technical details" if visible else "Show technical details")
         self.details_text.setVisible(visible)
@@ -1296,6 +1466,69 @@ class MainWindow(QMainWindow):
         # without selecting a new entry lands on the ready page, not the old result.
         self._reset_to_ready_state()
         self._show_result_workspace(shared_root=shared_root, selected_job_id=job_id)
+
+    def _open_library(self) -> None:
+        self._open_library_dialog()
+
+    def _open_library_entry(self, entry_id: str) -> None:
+        self._open_library_dialog(selected_entry_id=entry_id)
+
+    def _open_library_dialog(self, *, selected_entry_id: str | None = None) -> None:
+        shared_root = self.workflow.service.settings.effective_shared_inbox_root
+        try:
+            dialog = LibraryDialog(parent=self, shared_root=shared_root, selected_entry_id=selected_entry_id)
+            self._library_dialog = dialog
+            dialog.restore_requested.connect(self._restore_library_interpretation)
+            dialog.open_analysis_requested.connect(self._open_library_analysis)
+            dialog.exec()
+        except Exception as exc:  # pragma: no cover - GUI boundary
+            QMessageBox.critical(self, "Knowledge library failed", str(exc) or type(exc).__name__)
+        finally:
+            self._library_dialog = None
+
+    def _open_library_analysis(self, job_id: str) -> None:
+        shared_root = self.workflow.service.settings.effective_shared_inbox_root
+        dialog = self._library_dialog
+        if dialog is not None:
+            accept = getattr(dialog, "accept", None)
+            if callable(accept):
+                accept()
+        entry = load_job_result(shared_root, job_id)
+        if entry is not None and entry.state == "processed":
+            self._load_entry_into_result_view(entry)
+            return
+        self._show_result_workspace(shared_root=shared_root, selected_job_id=job_id)
+
+    def _restore_library_interpretation(self, entry_id: str, interpretation_id: str) -> None:
+        if self._task_thread is not None and self._task_thread.isRunning():
+            return
+        self.footer_label.setText("Restoring library interpretation...")
+        self._task_thread = WorkflowTaskThread(
+            lambda progress: self.workflow.restore_library_interpretation(entry_id, interpretation_id)
+        )
+        self._task_thread.completed.connect(self._on_restore_library_interpretation_completed)
+        self._task_thread.crashed.connect(self._on_restore_library_interpretation_crashed)
+        self._task_thread.start()
+
+    def _on_restore_library_interpretation_completed(self, state: OperationViewState) -> None:
+        self._task_thread = None
+        if state.status != "success":
+            self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
+            QMessageBox.warning(self, "Restore library interpretation failed", state.summary)
+            return
+        self.footer_label.setText("Library interpretation restored.")
+        dialog = self._library_dialog
+        if dialog is None:
+            return
+        try:
+            dialog.reload()
+        except Exception as exc:  # pragma: no cover - GUI boundary
+            QMessageBox.warning(self, "Restore library interpretation failed", str(exc) or type(exc).__name__)
+
+    def _on_restore_library_interpretation_crashed(self, message: str) -> None:
+        self._task_thread = None
+        self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
+        QMessageBox.warning(self, "Restore library interpretation failed", message)
 
     def _start_result_polling(self) -> None:
         self._result_poll_start_time = time.monotonic()
@@ -1401,6 +1634,9 @@ class MainWindow(QMainWindow):
             self.retry_button.show()
             self.new_url_button.show()
             self._latest_result_entry = result_entry
+            self._stop_result_polling()
+            self._elapsed_timer.stop()
+            self._elapsed_label.hide()
             return "failed"
         if result_entry.state == "processing" and result_entry.job_id:
             inferred = self._infer_processing_stage(

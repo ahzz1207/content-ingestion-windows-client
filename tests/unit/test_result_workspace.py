@@ -15,6 +15,43 @@ from windows_client.app.service import ReinterpretRequest, WindowsClientService
 from windows_client.config.settings import Settings
 
 
+def _question_driven_product_view() -> dict[str, object]:
+    return {
+        "hero": {
+            "title": "MegaTrain lowers the full-precision training barrier.",
+            "dek": "The paper's real contribution is making CPU memory, not GPU memory, the main capacity bottleneck.",
+            "bottom_line": "If you care about large-model training on modest GPU setups, this is worth tracking.",
+        },
+        "sections": [
+            {
+                "id": "core-idea",
+                "title": "MegaTrain的核心思路是什么，它解决了什么问题？",
+                "kind": "question_block",
+                "priority": 1,
+                "collapsed_by_default": False,
+                "blocks": [{"type": "bullet_list", "items": ["要点 A", "要点 B"]}],
+            },
+            {
+                "id": "performance",
+                "title": "实际效果如何？",
+                "kind": "question_block",
+                "priority": 2,
+                "collapsed_by_default": False,
+                "blocks": [{"type": "bullet_list", "items": ["结果 A", "结果 B"]}],
+            },
+            {
+                "id": "meaning",
+                "title": "这对我意味着什么？",
+                "kind": "reader_value",
+                "priority": 3,
+                "collapsed_by_default": False,
+                "blocks": [{"type": "bullet_list", "items": ["结论 A"]}],
+            },
+        ],
+        "render_hints": {"layout_family": "analysis_brief"},
+    }
+
+
 class _FakeWslBridge:
     def __init__(self, processed_root: Path) -> None:
         self.processed_root = processed_root
@@ -95,6 +132,39 @@ class ResultWorkspaceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def _write_processed_result(
+        self,
+        job_id: str,
+        *,
+        title: str,
+        summary_headline: str,
+        summary_text: str,
+        product_view: dict[str, object],
+    ) -> None:
+        job_dir = self.shared_root / "processed" / job_id
+        job_dir.mkdir()
+        (job_dir / "metadata.json").write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+        (job_dir / "normalized.json").write_text(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "asset": {
+                        "title": title,
+                        "result": {
+                            "summary": {
+                                "headline": summary_headline,
+                                "short_text": summary_text,
+                            },
+                            "product_view": product_view,
+                        },
+                    },
+                    "metadata": {"llm_processing": {"status": "pass"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job_dir / "status.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
 
     def test_load_processed_job_result(self) -> None:
         job_dir = self.shared_root / "processed" / "job-123"
@@ -239,6 +309,47 @@ class ResultWorkspaceTests(unittest.TestCase):
         brief = result.details.get("insight_brief")
         self.assertIsNotNone(brief)
         self.assertEqual(brief.hero.title, "Fallback headline")
+
+    def test_load_processed_job_result_preserves_question_driven_analysis_sections(self) -> None:
+        product_view = _question_driven_product_view()
+        self._write_processed_result(
+            "job-question-driven",
+            title="MegaTrain",
+            summary_headline="MegaTrain lowers the training barrier.",
+            summary_text="Question-driven analysis should remain intact.",
+            product_view=product_view,
+        )
+
+        result = load_job_result(self.shared_root, "job-question-driven")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        structured_result = result.details.get("structured_result", {})
+        self.assertEqual(structured_result.get("product_view"), product_view)
+        sections = structured_result.get("product_view", {}).get("sections", [])
+        question_section = next((section for section in sections if section.get("id") == "core-idea"), None)
+        self.assertEqual(question_section, product_view["sections"][0])
+
+    def test_load_processed_job_result_keeps_reader_value_section_in_product_view(self) -> None:
+        product_view = _question_driven_product_view()
+        self._write_processed_result(
+            "job-reader-value",
+            title="MegaTrain",
+            summary_headline="MegaTrain lowers the training barrier.",
+            summary_text="Reader-value section should remain intact.",
+            product_view=product_view,
+        )
+
+        result = load_job_result(self.shared_root, "job-reader-value")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        product_view_details = result.details.get("product_view", {})
+        reader_value_section = next(
+            (section for section in product_view_details.get("sections", []) if section.get("kind") == "reader_value"),
+            None,
+        )
+        self.assertEqual(reader_value_section, product_view["sections"][-1])
 
     def test_load_processed_job_result_follows_active_version_pointer(self) -> None:
         base_dir = self.shared_root / "processed" / "job-123"

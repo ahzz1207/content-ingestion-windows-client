@@ -37,6 +37,12 @@ class BrowserSessionSnapshot:
 
 
 @dataclass(slots=True)
+class LibrarySnapshot:
+    entry_id: str
+    trashed_interpretation_count: int = 0
+
+
+@dataclass(slots=True)
 class OperationViewState:
     operation: str
     status: str
@@ -44,6 +50,7 @@ class OperationViewState:
     doctor: DoctorSnapshot | None = None
     job: JobExportSnapshot | None = None
     browser_session: BrowserSessionSnapshot | None = None
+    library: LibrarySnapshot | None = None
     error: GuiErrorState | None = None
 
 

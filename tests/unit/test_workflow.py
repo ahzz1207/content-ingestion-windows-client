@@ -135,6 +135,48 @@ class WindowsClientWorkflowTests(unittest.TestCase):
         self.assertEqual(state.error.stage, "workflow")
         self.assertEqual(state.error.cause_type, "RuntimeError")
 
+    def test_save_result_to_library_returns_success_summary(self) -> None:
+        entry = MagicMock()
+        self.service.save_result_to_library = MagicMock(
+            return_value=type(
+                "Saved",
+                (),
+                {
+                    "entry_id": "lib_0001",
+                    "trashed_interpretations": [object()],
+                },
+            )()
+        )
+
+        state = self.workflow.save_result_to_library(entry)
+
+        self.assertEqual(state.operation, "save-result-to-library")
+        self.assertEqual(state.status, "success")
+        self.assertIn("lib_0001", state.summary)
+        self.assertIsNotNone(state.library)
+        self.assertEqual(state.library.entry_id, "lib_0001")
+        self.assertEqual(state.library.trashed_interpretation_count, 1)
+
+    def test_restore_library_interpretation_returns_success_summary(self) -> None:
+        self.service.restore_library_interpretation = MagicMock(
+            return_value=type(
+                "Saved",
+                (),
+                {
+                    "entry_id": "lib_0001",
+                    "trashed_interpretations": [object()],
+                },
+            )()
+        )
+
+        state = self.workflow.restore_library_interpretation("lib_0001", "interp_1")
+
+        self.assertEqual(state.operation, "restore-library-interpretation")
+        self.assertEqual(state.status, "success")
+        self.assertIn("lib_0001", state.summary)
+        self.assertIsNotNone(state.library)
+        self.assertEqual(state.library.entry_id, "lib_0001")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,16 @@ class PlatformRouterTests(unittest.TestCase):
         self.assertEqual(route.strategy, "http")
         self.assertIsNone(route.profile_slug)
 
+    def test_bilibili_watchlater_route_uses_browser_profile(self) -> None:
+        route = resolve_platform_route("https://www.bilibili.com/watchlater/#/list")
+
+        self.assertEqual(route.platform, "bilibili")
+        self.assertEqual(route.display_name, "Bilibili Watch Later")
+        self.assertEqual(route.strategy, "browser")
+        self.assertEqual(route.start_url, "https://www.bilibili.com/")
+        self.assertEqual(route.profile_slug, "bilibili")
+        self.assertEqual(route.profile_dir(self.settings), self.settings.browser_profiles_dir / "bilibili")
+
     def test_youtube_route_uses_browser_profile(self) -> None:
         route = resolve_platform_route("https://www.youtube.com/watch?v=demo123")
 

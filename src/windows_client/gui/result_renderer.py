@@ -224,30 +224,32 @@ def _primary_result_button_text(entry: ResultWorkspaceEntry) -> str:
 # CSS injected into the preview QTextBrowser document
 PREVIEW_STYLESHEET = """
 .preview-reading {
-    font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI', sans-serif;
-    font-size: 16px;
-    line-height: 1.9;
-    color: #233445;
+    font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+    font-size: 17px;
+    line-height: 1.95;
+    color: #33465e;
 }
 .preview-reading p {
-    margin: 0 0 14px 0;
+    margin: 0 0 16px 0;
 }
 .preview-reading p:first-child {
     margin-top: 0;
 }
 .preview-reading h2,
 .preview-reading h3,
-.preview-reading li,
 .preview-reading blockquote {
     font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Segoe UI', sans-serif;
+}
+.preview-reading li {
+    font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
 }
 .structured-result {
     display: block;
 }
 .result-section {
-    margin: 0 0 22px 0;
-    padding: 0 0 18px 0;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    margin: 0 0 26px 0;
+    padding: 0 0 20px 0;
+    border-bottom: 1px solid rgba(21, 33, 51, 0.08);
 }
 .result-section:last-child {
     margin-bottom: 0;
@@ -258,63 +260,70 @@ PREVIEW_STYLESHEET = """
     margin: 0 0 10px 0;
     font-size: 13px;
     font-weight: 700;
-    color: #7c3d26;
+    color: #66758a;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 .result-section h3 {
-    margin: 0 0 10px 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #16202b;
+    margin: 0 0 12px 0;
+    font-size: 20px;
+    font-weight: 650;
+    color: #152133;
+    letter-spacing: -0.02em;
 }
 .preview-reading ul,
 .preview-reading ol {
-    margin: 10px 0 0 0;
+    margin: 12px 0 0 0;
     padding-left: 22px;
 }
 .preview-reading li {
     margin: 0 0 8px 0;
-    color: #334155;
+    color: #33465e;
 }
 .preview-reading blockquote {
-    margin: 14px 0;
-    padding: 0 0 0 14px;
-    border-left: 3px solid rgba(148, 163, 184, 0.28);
-    color: #475569;
+    margin: 16px 0;
+    padding: 0 0 0 16px;
+    border-left: 3px solid rgba(58, 103, 214, 0.22);
+    color: #516276;
 }
 .result-card {
     margin: 0 0 14px 0;
     padding: 16px 20px;
-    background: rgba(255, 255, 255, 0.76);
-    border: 1px solid rgba(172, 139, 108, 0.12);
-    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(21, 33, 51, 0.08);
+    border-radius: 18px;
+    box-shadow: 0 10px 24px rgba(21, 33, 51, 0.05);
 }
 .result-hero {
-    padding: 18px 20px;
-    background: linear-gradient(135deg, rgba(163, 75, 45, 0.08), rgba(22, 32, 43, 0.04));
-    border: 1px solid rgba(163, 75, 45, 0.14);
-    border-radius: 20px;
+    padding: 22px 24px;
+    background: linear-gradient(135deg, rgba(229, 238, 252, 0.9), rgba(247, 244, 238, 0.96));
+    border: 1px solid rgba(21, 33, 51, 0.08);
+    border-radius: 24px;
+    box-shadow: 0 16px 36px rgba(21, 33, 51, 0.07);
 }
 .analysis-brief-layout {
     display: block;
 }
 .analysis-hero {
     padding: 22px 24px;
-    background: linear-gradient(135deg, rgba(120, 53, 15, 0.10), rgba(15, 23, 42, 0.05));
-    border: 1px solid rgba(120, 53, 15, 0.18);
+    background: linear-gradient(135deg, rgba(229, 238, 252, 0.9), rgba(247, 244, 238, 0.96));
+    border: 1px solid rgba(21, 33, 51, 0.08);
     border-radius: 22px;
     margin: 0 0 20px 0;
 }
 .analysis-hero h2 {
-    font-size: 23px;
+    font-size: 24px;
     margin-bottom: 12px;
+    color: #152133;
+    letter-spacing: -0.03em;
 }
 .analysis-section-label {
     display: inline-block;
     margin: 0 0 10px 0;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(120, 53, 15, 0.10);
-    color: #9a3412;
+    background: rgba(58, 103, 214, 0.12);
+    color: #3a67d6;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -367,8 +376,8 @@ PREVIEW_STYLESHEET = """
 }
 .guide-compact-hero {
     padding: 14px 16px;
-    background: rgba(14, 116, 144, 0.06);
-    border: 1px solid rgba(14, 116, 144, 0.14);
+    background: rgba(229, 238, 252, 0.78);
+    border: 1px solid rgba(21, 33, 51, 0.08);
     border-radius: 16px;
     margin: 0 0 16px 0;
 }
@@ -385,15 +394,15 @@ PREVIEW_STYLESHEET = """
     margin: 0 0 8px 0;
     padding: 3px 9px;
     border-radius: 999px;
-    background: rgba(14, 116, 144, 0.10);
-    color: #0f766e;
+    background: rgba(58, 103, 214, 0.12);
+    color: #3a67d6;
     font-size: 11px;
     font-weight: 700;
 }
 .result-takeaway {
     padding: 18px 20px;
-    background: rgba(22, 32, 43, 0.04);
-    border: 1px solid rgba(22, 32, 43, 0.08);
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(21, 33, 51, 0.08);
     border-radius: 20px;
 }
 .result-warnings {
@@ -435,7 +444,7 @@ PREVIEW_STYLESHEET = """
 .evidence-list {
     margin: 10px 0 0 0;
     padding-left: 18px;
-    color: #475569;
+    color: #516276;
 }
 pre {
     white-space: pre-wrap;
@@ -498,7 +507,7 @@ def _structured_preview_html(
         if headline or short_text:
             sections.append(
                 "<section class='result-section result-hero'>"
-                f"<h2>{html.escape(headline or 'Summary')}</h2>"
+                f"<h2>{html.escape(headline or '摘要')}</h2>"
                 f"<p>{html.escape(short_text or headline)}</p>"
                 "</section>"
             )
@@ -530,8 +539,8 @@ def _structured_preview_html(
                 "</section>"
             )
 
-    _render_cards(result.get("key_points"), title="Key Points", title_key="title", body_key="details")
-    _render_cards(result.get("analysis_items"), title="Analysis", title_key="kind", body_key="statement")
+    _render_cards(result.get("key_points"), title="要点提炼", title_key="title", body_key="details")
+    _render_cards(result.get("analysis_items"), title="分析展开", title_key="kind", body_key="statement")
 
     verification_items = result.get("verification_items")
     if isinstance(verification_items, list) and verification_items:
@@ -555,7 +564,7 @@ def _structured_preview_html(
         if cards:
             sections.append(
                 "<section class='result-section'>"
-                "<h2>Verification</h2>"
+                "<h2>事实核验</h2>"
                 f"<div class='result-grid'>{''.join(cards)}</div>"
                 "</section>"
             )
@@ -568,20 +577,20 @@ def _structured_preview_html(
         extras: list[str] = []
         if isinstance(next_steps, list) and next_steps:
             extras.append(
-                "<div><h3>Next Steps</h3><ul>"
+                "<div><h3>下一步</h3><ul>"
                 + "".join(f"<li>{html.escape(str(step))}</li>" for step in next_steps)
                 + "</ul></div>"
             )
         if isinstance(open_questions, list) and open_questions:
             extras.append(
-                "<div><h3>Open Questions</h3><ul>"
+                "<div><h3>待解问题</h3><ul>"
                 + "".join(f"<li>{html.escape(str(question))}</li>" for question in open_questions)
                 + "</ul></div>"
             )
         if final_answer or extras:
             sections.append(
                 "<section class='result-section result-takeaway'>"
-                "<h2>Takeaway</h2>"
+                "<h2>核心结论</h2>"
                 f"<p>{html.escape(final_answer)}</p>"
                 f"{''.join(extras)}"
                 "</section>"
@@ -602,7 +611,7 @@ def _structured_preview_html(
         if warning_items:
             sections.append(
                 "<section class='result-section result-warnings'>"
-                "<h2>Warnings</h2>"
+                "<h2>风险提示</h2>"
                 f"<ul>{''.join(warning_items)}</ul>"
                 "</section>"
             )
@@ -617,13 +626,18 @@ def _product_view_html(product_view: dict[str, object]) -> str:
     if isinstance(sections_data, list):
         section_kinds = {str(item.get("kind") or "").strip() for item in sections_data if isinstance(item, dict)}
         layout = str(product_view.get("layout") or "").strip()
-        if layout == "analysis_brief" or {"core_judgment", "main_arguments", "evidence"}.issubset(section_kinds):
+        render_hints = product_view.get("render_hints")
+        layout_family = ""
+        if isinstance(render_hints, dict):
+            layout_family = str(render_hints.get("layout_family") or "").strip()
+        selected_layout = layout or layout_family
+        if selected_layout == "analysis_brief" or (not selected_layout and {"core_judgment", "main_arguments", "evidence"}.issubset(section_kinds)):
             return _analysis_product_view_html(product_view)
-        if layout == "practical_guide" or {"one_line_summary", "core_takeaways"}.issubset(section_kinds):
+        if selected_layout == "practical_guide" or (not selected_layout and {"one_line_summary", "core_takeaways"}.issubset(section_kinds)):
             return _guide_product_view_html(product_view)
-        if layout == "review_curation":
+        if selected_layout == "review_curation":
             return _review_product_view_html(product_view)
-        if layout == "narrative_digest":
+        if selected_layout == "narrative_digest":
             return _narrative_product_view_html(product_view)
 
     sections: list[str] = []
@@ -635,7 +649,7 @@ def _product_view_html(product_view: dict[str, object]) -> str:
         bottom_line = str(hero.get("bottom_line") or "").strip()
         worth_reading_reason = str(hero.get("worth_reading_reason") or "").strip()
         hero_bits = [
-            f"<h2>{html.escape(title or 'Summary')}</h2>",
+            f"<h2>{html.escape(title or '摘要')}</h2>",
         ]
         if dek:
             hero_bits.append(f"<p>{html.escape(dek)}</p>")
@@ -678,6 +692,9 @@ def _product_view_html(product_view: dict[str, object]) -> str:
 
 
 def _analysis_product_view_html(product_view: dict[str, object]) -> str:
+    def _uses_question_style_section(section_kind: str) -> bool:
+        return section_kind in {"question_block", "reader_value"}
+
     parts: list[str] = ["<div class='analysis-brief-layout'>"]
     hero = product_view.get("hero")
     if isinstance(hero, dict):
@@ -699,13 +716,23 @@ def _analysis_product_view_html(product_view: dict[str, object]) -> str:
         )
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
+            section_kind = str(item.get("kind") or "").strip()
             blocks_html = _product_view_blocks_html(item.get("blocks"))
             if not blocks_html:
                 continue
+            uses_question_style = _uses_question_style_section(section_kind)
+            label_html = ""
+            if not uses_question_style and title:
+                label_html = f"<div class='analysis-section-label'>{html.escape(title)}</div>"
+            elif title:
+                label_html = f"<h2>{html.escape(title)}</h2>"
+            content_html = blocks_html
+            if not uses_question_style:
+                content_html = f"<div class='analysis-card-grid'>{blocks_html}</div>"
             parts.append(
                 "<section class='result-section'>"
-                f"<div class='analysis-section-label'>{html.escape(title)}</div>"
-                f"<div class='analysis-card-grid'>{blocks_html}</div>"
+                f"{label_html}"
+                f"{content_html}"
                 "</section>"
             )
     parts.append("</div>")
@@ -855,8 +882,8 @@ def _coverage_warning_html(entry: ResultWorkspaceEntry) -> str:
     pct = int(coverage_ratio * 100)
     return (
         f"<div class='coverage-warning'>"
-        f"&#9888; Coverage warning: only {pct}% of source segments were analysed "
-        f"({used}/{total}). Conclusions may be incomplete."
+        f"&#9888; 覆盖范围提示：当前只分析了 {pct}% 的原始分段 "
+        f"({used}/{total})。结论可能并不完整。"
         f"</div>"
     )
 
@@ -885,24 +912,24 @@ def _preview_hint(entry: ResultWorkspaceEntry) -> str:
     """Return a human-readable hint line for the preview section."""
     if entry.state == "processed":
         if _product_view_payload(entry) is not None:
-            return "Reader-first product view from the latest analysis output."
+            return "基于最新分析结果生成的阅读优先产品视图。"
         if _structured_result_payload(entry) is not None:
-            return "Structured summary, analysis, and evidence from the latest analysis output."
+            return "基于最新分析结果整理出的结构化摘要、分析与证据。"
         if entry.analysis_state == "skipped":
             skip_reason = _analysis_skip_reason(entry)
             if skip_reason:
-                return f"Content was captured, but analysis was skipped: {skip_reason}."
-            return "Content was captured, but analysis was skipped before a structured result was written."
+                return f"内容已抓取，但分析阶段被跳过：{skip_reason}。"
+            return "内容已抓取，但在写出结构化结果前分析阶段被跳过。"
         if entry.analysis_state == "failed":
-            return "Content was captured, but analysis failed before a structured result was written."
+            return "内容已抓取，但在写出结构化结果前分析阶段失败。"
         if entry.analysis_state == "normalized_only":
-            return "Content was captured, but the analysis stage did not attach a structured result."
-        return "Reading extract from the captured content."
+            return "内容已抓取，但分析阶段没有附带结构化结果。"
+        return "以下为抓取内容中的可读摘录。"
     if entry.state == "failed":
-        return "Failure details from the result directory."
+        return "以下为结果目录中的失败详情。"
     if entry.state == "processing":
-        return "Being analysed. Metadata below reflects the latest state."
-    return "Queued for analysis. Details below come from the capture metadata."
+        return "正在分析中，下方元数据反映的是最新状态。"
+    return "任务已进入分析队列，下方信息来自抓取阶段的元数据。"
 
 
 # ---------------------------------------------------------------------------
@@ -921,7 +948,7 @@ def entry_to_markdown(entry: ResultWorkspaceEntry) -> str:
         takeaways = list(brief.quick_takeaways)
         gaps = list(brief.gaps)
     else:
-        title = entry.title or "Untitled"
+        title = entry.title or "未命名结果"
         one_take = entry.summary or ""
         conclusion = None
         takeaways = []
@@ -936,23 +963,23 @@ def entry_to_markdown(entry: ResultWorkspaceEntry) -> str:
 
     source = entry.source_url or entry.canonical_url
     if source:
-        lines += [f"Source: {source}", ""]
+        lines += [f"来源链接：{source}", ""]
 
     if one_take:
-        lines += ["## Summary", "", one_take, ""]
+        lines += ["## 摘要", "", one_take, ""]
 
     if takeaways:
-        lines.append("## Key Points")
+        lines.append("## 要点提炼")
         lines.append("")
         for i, point in enumerate(takeaways, start=1):
             lines.append(f"{i}. {point}")
         lines.append("")
 
     if conclusion:
-        lines += ["## Bottom Line", "", conclusion, ""]
+        lines += ["## 核心结论", "", conclusion, ""]
 
     if gaps:
-        lines.append("## Questions & Next Steps")
+        lines.append("## 问题与下一步")
         lines.append("")
         for gap in gaps:
             lines.append(f"- {gap}")
@@ -960,7 +987,7 @@ def entry_to_markdown(entry: ResultWorkspaceEntry) -> str:
 
     visual_findings = [f for f in entry.details.get("visual_findings") or [] if isinstance(f, dict)]
     if visual_findings:
-        lines.append("## Visual Evidence")
+        lines.append("## 视觉证据")
         lines.append("")
         for finding in visual_findings:
             description = str(finding.get("description") or "").strip()

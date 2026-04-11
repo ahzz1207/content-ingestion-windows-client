@@ -7,6 +7,7 @@ from windows_client.app.errors import WindowsClientError
 from windows_client.app.service import WindowsClientService
 from windows_client.app.view_models import (
     BrowserSessionSnapshot,
+    LibrarySnapshot,
     OperationViewState,
     doctor_snapshot,
     error_state,
@@ -160,6 +161,56 @@ class WindowsClientWorkflow:
         except Exception as exc:  # pragma: no cover - defensive GUI boundary
             return self._failed(
                 "browser-login",
+                WindowsClientError(
+                    "unexpected_error",
+                    str(exc) or type(exc).__name__,
+                    stage="workflow",
+                    cause=exc,
+                ),
+            )
+
+    def save_result_to_library(self, entry) -> OperationViewState:
+        try:
+            saved = self.service.save_result_to_library(entry)
+            return OperationViewState(
+                operation="save-result-to-library",
+                status="success",
+                summary=f"Saved to library: {saved.entry_id}",
+                library=LibrarySnapshot(
+                    entry_id=saved.entry_id,
+                    trashed_interpretation_count=len(saved.trashed_interpretations),
+                ),
+            )
+        except WindowsClientError as error:
+            return self._failed("save-result-to-library", error)
+        except Exception as exc:  # pragma: no cover - defensive GUI boundary
+            return self._failed(
+                "save-result-to-library",
+                WindowsClientError(
+                    "unexpected_error",
+                    str(exc) or type(exc).__name__,
+                    stage="workflow",
+                    cause=exc,
+                ),
+            )
+
+    def restore_library_interpretation(self, entry_id: str, interpretation_id: str) -> OperationViewState:
+        try:
+            saved = self.service.restore_library_interpretation(entry_id, interpretation_id)
+            return OperationViewState(
+                operation="restore-library-interpretation",
+                status="success",
+                summary=f"Restored library entry: {saved.entry_id}",
+                library=LibrarySnapshot(
+                    entry_id=saved.entry_id,
+                    trashed_interpretation_count=len(saved.trashed_interpretations),
+                ),
+            )
+        except WindowsClientError as error:
+            return self._failed("restore-library-interpretation", error)
+        except Exception as exc:  # pragma: no cover - defensive GUI boundary
+            return self._failed(
+                "restore-library-interpretation",
                 WindowsClientError(
                     "unexpected_error",
                     str(exc) or type(exc).__name__,

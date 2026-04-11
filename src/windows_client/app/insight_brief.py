@@ -56,6 +56,191 @@ def _editorial_list(values: Any) -> list[str]:
     return result
 
 
+def _build_viewpoints(
+    result: dict[str, Any],
+    evidence_index: dict[str, EvidenceSnippet],
+) -> list[ViewpointItem]:
+    viewpoints: list[ViewpointItem] = []
+
+    key_points = result.get("key_points")
+    if isinstance(key_points, list):
+        for item in key_points:
+            if not isinstance(item, dict):
+                continue
+            statement = str(item.get("title") or "").strip()
+            if not statement:
+                continue
+            viewpoints.append(
+                ViewpointItem(
+                    statement=statement,
+                    kind="key_point",
+                    why_it_matters=str(item.get("details") or "").strip() or None,
+                    support_level=str(item.get("support_level") or "").strip() or None,
+                    evidence_refs=resolve_evidence_for_item(item, evidence_index),
+                )
+            )
+
+    analysis_items = result.get("analysis_items")
+    if isinstance(analysis_items, list):
+        for item in analysis_items:
+            if not isinstance(item, dict):
+                continue
+            statement = str(item.get("statement") or "").strip()
+            if not statement:
+                continue
+            viewpoints.append(
+                ViewpointItem(
+                    statement=statement,
+                    kind="analysis",
+                    why_it_matters=str(item.get("why_it_matters") or "").strip() or None,
+                    support_level=str(item.get("support_level") or "").strip() or None,
+                    evidence_refs=resolve_evidence_for_item(item, evidence_index),
+                )
+            )
+
+    verification_items = result.get("verification_items")
+    if isinstance(verification_items, list):
+        for item in verification_items:
+            if not isinstance(item, dict):
+                continue
+            statement = str(item.get("claim") or "").strip()
+            if not statement:
+                continue
+            viewpoints.append(
+                ViewpointItem(
+                    statement=statement,
+                    kind="verification",
+                    why_it_matters=str(item.get("rationale") or "").strip() or None,
+                    support_level=str(item.get("status") or "").strip() or None,
+                    evidence_refs=resolve_evidence_for_item(item, evidence_index),
+                )
+            )
+
+    return viewpoints
+
+
+def _collect_synthesis_details(result: dict[str, Any]) -> tuple[list[str], str | None]:
+    synthesis = result.get("synthesis")
+    gaps: list[str] = []
+    synthesis_conclusion: str | None = None
+    if isinstance(synthesis, dict):
+        open_questions = synthesis.get("open_questions")
+        if isinstance(open_questions, list):
+            gaps.extend(str(q) for q in open_questions if q)
+        next_steps = synthesis.get("next_steps")
+        if isinstance(next_steps, list):
+            gaps.extend(str(s) for s in next_steps if s)
+        final_answer = str(synthesis.get("final_answer") or "").strip()
+        if final_answer:
+            synthesis_conclusion = final_answer
+    return gaps, synthesis_conclusion
+
+
+def _section_priority(section: dict[str, Any]) -> int:
+    try:
+        return int(section.get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _first_product_view_bullet(blocks: Any) -> str | None:
+    if not isinstance(blocks, list):
+        return None
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if str(block.get("type") or "").strip() != "bullet_list":
+            continue
+        items = block.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            text = str(item or "").strip()
+            if text:
+                return text
+    return None
+
+
+def _product_view_takeaway(section: dict[str, Any]) -> str | None:
+    return str(section.get("title") or "").strip() or _first_product_view_bullet(section.get("blocks"))
+
+
+def _adapt_from_question_driven_product_view(
+    result: dict[str, Any],
+    evidence_index: dict[str, EvidenceSnippet],
+    coverage: CoverageStats | None,
+) -> InsightBriefV2 | None:
+    product_view = _coerce_dict(result.get("product_view"))
+    if not product_view:
+        return None
+
+    render_hints = _coerce_dict(product_view.get("render_hints"))
+    layout_family = str(render_hints.get("layout_family") or product_view.get("layout") or "").strip()
+    if layout_family and layout_family != "analysis_brief":
+        return None
+
+    raw_sections = product_view.get("sections")
+    if not isinstance(raw_sections, list):
+        return None
+
+    sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=_section_priority)
+    question_sections = [item for item in sections if str(item.get("kind") or "").strip() == "question_block"]
+    reader_value_sections = [item for item in sections if str(item.get("kind") or "").strip() == "reader_value"]
+    if not question_sections and not reader_value_sections:
+        return None
+
+    summary = _coerce_dict(result.get("summary"))
+    summary_headline = str(summary.get("headline") or "").strip()
+    summary_short_text = str(summary.get("short_text") or "").strip()
+
+    hero_payload = _coerce_dict(product_view.get("hero"))
+    hero_title = str(hero_payload.get("title") or "").strip()
+    hero_dek = str(hero_payload.get("dek") or "").strip()
+    hero_bottom_line = str(hero_payload.get("bottom_line") or "").strip()
+
+    hero = HeroBrief(
+        title=hero_title or summary_headline or hero_dek or hero_bottom_line or summary_short_text,
+        one_sentence_take=hero_dek or hero_bottom_line or summary_short_text or summary_headline,
+        content_kind=str(result.get("content_kind") or "").strip() or None,
+        author_stance=str(result.get("author_stance") or "").strip() or None,
+    )
+
+    if not hero.title and not hero.one_sentence_take:
+        return None
+
+    quick_takeaways: list[str] = []
+    for section in question_sections:
+        takeaway = _product_view_takeaway(section)
+        if takeaway:
+            quick_takeaways.append(takeaway)
+        if len(quick_takeaways) >= 3:
+            break
+    if not quick_takeaways:
+        for section in reader_value_sections:
+            takeaway = _product_view_takeaway(section)
+            if takeaway:
+                quick_takeaways.append(takeaway)
+            if len(quick_takeaways) >= 3:
+                break
+
+    gaps, synthesis_conclusion = _collect_synthesis_details(result)
+    if not hero_bottom_line:
+        for section in reader_value_sections:
+            hero_bottom_line = _first_product_view_bullet(section.get("blocks")) or ""
+            if hero_bottom_line:
+                break
+    synthesis_conclusion = hero_bottom_line or synthesis_conclusion
+
+    return InsightBriefV2(
+        hero=hero,
+        quick_takeaways=quick_takeaways,
+        viewpoints=_build_viewpoints(result, evidence_index),
+        coverage=coverage,
+        gaps=gaps,
+        synthesis_conclusion=synthesis_conclusion,
+    )
+
+
 def _adapt_from_editorial(
     result: dict[str, Any],
     editorial: dict[str, Any],
@@ -157,6 +342,10 @@ def adapt_from_structured_result(
         if adapted is not None:
             return adapted
 
+    adapted = _adapt_from_question_driven_product_view(result, evidence_index, coverage)
+    if adapted is not None:
+        return adapted
+
     summary = result.get("summary")
     if not isinstance(summary, dict):
         return None
@@ -183,75 +372,8 @@ def adapt_from_structured_result(
                 if title:
                     quick_takeaways.append(title)
 
-    # viewpoints: key_points + analysis_items + verification_items merged
-    viewpoints: list[ViewpointItem] = []
-    if isinstance(key_points, list):
-        for item in key_points:
-            if not isinstance(item, dict):
-                continue
-            statement = str(item.get("title") or "").strip()
-            if not statement:
-                continue
-            viewpoints.append(
-                ViewpointItem(
-                    statement=statement,
-                    kind="key_point",
-                    why_it_matters=str(item.get("details") or "").strip() or None,
-                    support_level=str(item.get("support_level") or "").strip() or None,
-                    evidence_refs=resolve_evidence_for_item(item, evidence_index),
-                )
-            )
-
-    analysis_items = result.get("analysis_items")
-    if isinstance(analysis_items, list):
-        for item in analysis_items:
-            if not isinstance(item, dict):
-                continue
-            statement = str(item.get("statement") or "").strip()
-            if not statement:
-                continue
-            viewpoints.append(
-                ViewpointItem(
-                    statement=statement,
-                    kind="analysis",
-                    why_it_matters=str(item.get("why_it_matters") or "").strip() or None,
-                    support_level=str(item.get("support_level") or "").strip() or None,
-                    evidence_refs=resolve_evidence_for_item(item, evidence_index),
-                )
-            )
-
-    verification_items = result.get("verification_items")
-    if isinstance(verification_items, list):
-        for item in verification_items:
-            if not isinstance(item, dict):
-                continue
-            statement = str(item.get("claim") or "").strip()
-            if not statement:
-                continue
-            viewpoints.append(
-                ViewpointItem(
-                    statement=statement,
-                    kind="verification",
-                    why_it_matters=str(item.get("rationale") or "").strip() or None,
-                    support_level=str(item.get("status") or "").strip() or None,
-                    evidence_refs=resolve_evidence_for_item(item, evidence_index),
-                )
-            )
-
-    # gaps: open_questions + next_steps from synthesis; conclusion from final_answer
-    synthesis = result.get("synthesis")
-    gaps: list[str] = []
-    synthesis_conclusion: str | None = None
-    if isinstance(synthesis, dict):
-        open_questions = synthesis.get("open_questions")
-        if isinstance(open_questions, list):
-            gaps.extend(str(q) for q in open_questions if q)
-        next_steps = synthesis.get("next_steps")
-        if isinstance(next_steps, list):
-            gaps.extend(str(s) for s in next_steps if s)
-        final_answer = str(synthesis.get("final_answer") or "").strip()
-        if final_answer:
-            synthesis_conclusion = final_answer
+    viewpoints = _build_viewpoints(result, evidence_index)
+    gaps, synthesis_conclusion = _collect_synthesis_details(result)
 
     return InsightBriefV2(
         hero=hero,

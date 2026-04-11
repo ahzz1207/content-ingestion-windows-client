@@ -477,7 +477,7 @@ class ResultWorkspaceDialog(QDialog):
             self._status_note.hide()
 
         # Buttons
-        self.view_button.setEnabled(entry.state == "processed" and brief is not None)
+        self.view_button.setEnabled(entry.state == "processed")
         self.folder_button.setEnabled(entry.job_dir is not None)
         self.json_button.setEnabled(
             entry.analysis_json_path is not None or entry.normalized_json_path is not None
