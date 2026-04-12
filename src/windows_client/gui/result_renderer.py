@@ -362,6 +362,27 @@ PREVIEW_STYLESHEET = """
     font-size: 11px;
     font-weight: 700;
 }
+.review-section {
+    border-radius: 18px;
+    padding: 16px 18px;
+    border: 1px solid rgba(21, 33, 51, 0.08);
+    background: rgba(255, 255, 255, 0.88);
+    margin: 0 0 14px 0;
+}
+.review-section-highlight_block {
+    background: rgba(124, 58, 237, 0.05);
+}
+.review-section-standout_block {
+    background: rgba(236, 72, 153, 0.05);
+}
+.review-section-reservation_block {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.22);
+}
+.review-section-reader_value {
+    background: rgba(59, 130, 246, 0.06);
+    border-color: rgba(59, 130, 246, 0.18);
+}
 .narrative-digest-layout {
     display: block;
 }
@@ -396,6 +417,27 @@ PREVIEW_STYLESHEET = """
 .guide-digest-layout .result-section {
     margin: 0 0 14px 0;
     padding: 0 0 12px 0;
+}
+.guide-section {
+    border-radius: 16px;
+    padding: 14px 16px;
+    border: 1px solid rgba(21, 33, 51, 0.08);
+    background: rgba(255, 255, 255, 0.88);
+}
+.guide-section-action_step {
+    background: rgba(229, 238, 252, 0.55);
+}
+.guide-section-tip_block {
+    background: rgba(16, 185, 129, 0.06);
+    border-color: rgba(16, 185, 129, 0.18);
+}
+.guide-section-pitfall_warning {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.22);
+}
+.guide-section-reader_value {
+    background: rgba(37, 99, 235, 0.07);
+    border-color: rgba(37, 99, 235, 0.18);
 }
 .guide-section-label {
     display: inline-block;
@@ -769,11 +811,15 @@ def _guide_product_view_html(product_view: dict[str, object]) -> str:
         )
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
+            section_kind = str(item.get("kind") or "").strip()
             blocks_html = _product_view_blocks_html(item.get("blocks"))
             if not blocks_html:
                 continue
+            section_classes = "guide-section"
+            if section_kind:
+                section_classes += f" guide-section-{html.escape(section_kind)}"
             parts.append(
-                "<section class='result-section'>"
+                f"<section class='result-section {section_classes}'>"
                 f"<div class='guide-section-label'>{html.escape(title)}</div>"
                 f"{blocks_html}"
                 "</section>"
@@ -788,9 +834,12 @@ def _review_product_view_html(product_view: dict[str, object]) -> str:
     if isinstance(hero, dict):
         title = str(hero.get("title") or "").strip()
         dek = str(hero.get("dek") or "").strip()
+        bottom_line = str(hero.get("bottom_line") or "").strip()
         hero_bits = ["<div class='review-curation-label'>推荐导览</div>", f"<h2>{html.escape(title or '推荐导览')}</h2>"]
         if dek:
             hero_bits.append(f"<p>{html.escape(dek)}</p>")
+        if bottom_line and bottom_line != dek:
+            hero_bits.append(f"<p>{html.escape(bottom_line)}</p>")
         parts.append(f"<section class='review-curation-hero'>{''.join(hero_bits)}</section>")
 
     raw_sections = product_view.get("sections")
@@ -798,11 +847,15 @@ def _review_product_view_html(product_view: dict[str, object]) -> str:
         sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: int(item.get("priority") or 0))
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
+            section_kind = str(item.get("kind") or "").strip()
             blocks_html = _product_view_blocks_html(item.get("blocks"))
             if not blocks_html:
                 continue
+            section_classes = "review-section"
+            if section_kind:
+                section_classes += f" review-section-{html.escape(section_kind)}"
             parts.append(
-                "<section class='result-section'>"
+                f"<section class='result-section {section_classes}'>"
                 f"<div class='review-curation-label'>{html.escape(title)}</div>"
                 f"{blocks_html}"
                 "</section>"

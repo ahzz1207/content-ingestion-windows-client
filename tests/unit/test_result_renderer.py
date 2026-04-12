@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -50,6 +51,11 @@ def _make_entry(**kwargs):
     e.error_path = None
     e.details = kwargs.get("details", {})
     return e
+
+
+def _load_collab_fixture(name: str) -> dict:
+    fixture_path = PROJECT_ROOT / "data" / "collab" / "fixtures" / name
+    return json.loads(fixture_path.read_text(encoding="utf-8"))
 
 
 def _structured_entry(key_points_count: int = 3) -> object:
@@ -432,6 +438,21 @@ def _narrative_product_view_entry() -> object:
     return entry
 
 
+def _collab_product_view_entry(fixture_name: str, *, resolved_mode: str) -> object:
+    entry = _make_entry()
+    entry.details = {
+        "normalized": {
+            "asset": {
+                "result": {
+                    "product_view": _load_collab_fixture(fixture_name),
+                }
+            },
+            "metadata": {"llm_processing": {"status": "pass", "resolved_mode": resolved_mode}},
+        }
+    }
+    return entry
+
+
 class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -635,6 +656,77 @@ class TestStructuredPreviewHtmlNoTruncation(unittest.TestCase):
         self.assertIn("Highlights", html)
         self.assertIn("Who it&#x27;s for", html)
         self.assertIn("Reservations", html)
+
+    def test_collab_fixture_guide_product_view_renders_new_section_kinds(self) -> None:
+        entry = _collab_product_view_entry("product-view-guide-sample.json", resolved_mode="guide")
+
+        html = _structured_preview_html(entry, resolved_mode="guide")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("guide-digest-layout", html)
+        self.assertIn("零基础搭建 Obsidian 知识管理工作流", html)
+        self.assertIn("今天就建一个 vault，写第一条日记", html)
+        self.assertIn("第一步该怎么做？", html)
+        self.assertIn("然后呢？", html)
+        self.assertIn("还需要注意什么？", html)
+        self.assertIn("有什么实用技巧？", html)
+        self.assertIn("这对我意味着什么？", html)
+        self.assertIn("<ol>", html)
+        self.assertIn("<ul>", html)
+
+    def test_collab_fixture_guide_product_view_uses_kind_specific_section_classes(self) -> None:
+        entry = _collab_product_view_entry("product-view-guide-sample.json", resolved_mode="guide")
+
+        html = _structured_preview_html(entry, resolved_mode="guide")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("guide-section guide-section-action_step", html)
+        self.assertIn("guide-section guide-section-tip_block", html)
+        self.assertIn("guide-section guide-section-reader_value", html)
+
+    def test_collab_fixture_review_product_view_renders_bottom_line_and_reader_value(self) -> None:
+        entry = _collab_product_view_entry("product-view-review-sample.json", resolved_mode="review")
+
+        html = _structured_preview_html(entry, resolved_mode="review")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("review-curation-layout", html)
+        self.assertIn("经典科普之作，用故事讲清了别人用公式才能讲的事", html)
+        self.assertIn("非技术读者也能跟上，但需要耐心", html)
+        self.assertIn("最值得关注的亮点是什么？", html)
+        self.assertIn("最让人印象深刻的是什么？", html)
+        self.assertIn("有什么保留意见？", html)
+        self.assertIn("这适合什么样的人？", html)
+        self.assertIn("从莫尔斯电码讲到布尔代数，过渡自然", html)
+
+    def test_collab_fixture_review_product_view_shows_bottom_line_and_kind_specific_classes(self) -> None:
+        entry = _collab_product_view_entry("product-view-review-sample.json", resolved_mode="review")
+
+        html = _structured_preview_html(entry, resolved_mode="review")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("非技术读者也能跟上，但需要耐心", html)
+        self.assertIn("review-section review-section-highlight_block", html)
+        self.assertIn("review-section review-section-reservation_block", html)
+        self.assertIn("review-section review-section-reader_value", html)
+
+    def test_collab_fixture_argument_product_view_still_renders_question_driven_analysis(self) -> None:
+        entry = _collab_product_view_entry("product-view-argument-sample.json", resolved_mode="argument")
+
+        html = _structured_preview_html(entry, resolved_mode="argument")
+
+        self.assertIsNotNone(html)
+        assert html is not None
+        self.assertIn("analysis-brief-layout", html)
+        self.assertIn("结论先说：这个观点站得住，但条件很多。", html)
+        self.assertIn("为什么作者会这么判断？", html)
+        self.assertIn("最有力的支撑是什么？", html)
+        self.assertIn("接下来会带来什么影响？", html)
+        self.assertIn("这对我意味着什么？", html)
 
     def test_narrative_product_view_renders_as_story_shaped_layout(self) -> None:
         entry = _narrative_product_view_entry()
