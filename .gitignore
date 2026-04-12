@@ -19,3 +19,4 @@ data/wsl-watch.log
 !data/.gitkeep
 !data/shared_inbox/.gitkeep
 data/collab/
+.worktrees/
