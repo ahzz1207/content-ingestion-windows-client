@@ -95,6 +95,12 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("#ReadingStreamShell", stylesheet)
         self.assertIn("#ContextRailShell", stylesheet)
 
+    def test_main_window_stylesheet_contains_inline_result_compact_layout_hooks(self) -> None:
+        stylesheet = self.window.styleSheet()
+
+        self.assertIn('QFrame#ImmersiveHero[isNarrowLayout="true"]', stylesheet)
+        self.assertIn('QFrame#ImageSummaryCard[hasInsightCard="true"]', stylesheet)
+
     def test_render_success_starts_result_polling_without_manual_refresh_button(self) -> None:
         metadata_path = self.window._current_state.job.metadata_path
         metadata_path.parent.mkdir(parents=True, exist_ok=True)

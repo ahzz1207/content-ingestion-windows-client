@@ -776,17 +776,28 @@ class MainWindow(QMainWindow):
                     stop: 1 rgba(238, 230, 216, 0.96)
                 );
                 border: 1px solid rgba(255, 255, 255, 0.82);
-                border-radius: 38px;
+                border-radius: 30px;
+            }
+            QFrame#ImmersiveHero[isNarrowLayout="true"] {
+                border-radius: 28px;
             }
             #HeroTopBar {
+                background: transparent;
+                border: none;
+            }
+            QWidget#HeroTopBar[isNarrowLayout="true"] {
                 background: transparent;
                 border: none;
             }
             #HeroActionStrip {
                 background: rgba(255, 255, 255, 0.32);
                 border: 1px solid rgba(255, 255, 255, 0.58);
-                border-radius: 22px;
+                border-radius: 18px;
                 padding: 6px;
+            }
+            QWidget#HeroActionStrip[isNarrowLayout="true"] {
+                border-radius: 18px;
+                padding: 4px;
             }
             #HeroMetaRow {
                 background: transparent;
@@ -796,6 +807,9 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 border: none;
                 border-radius: 34px;
+            }
+            QFrame#HeroCard[isNarrowLayout="true"] {
+                border-radius: 24px;
             }
             #SourceHeaderCard {
                 background: rgba(255, 255, 255, 0.88);
@@ -856,6 +870,13 @@ class MainWindow(QMainWindow):
                 background: rgba(255, 255, 255, 0.84);
                 border: 1px solid rgba(255, 255, 255, 0.78);
                 border-radius: 28px;
+            }
+            QFrame#ImageSummaryCard[hasInsightCard="true"] {
+                background: rgba(255, 255, 255, 0.94);
+                border: 1px solid rgba(58, 103, 214, 0.12);
+            }
+            QFrame#ImageSummaryCard[isNarrowLayout="true"][hasInsightCard="true"] {
+                border-radius: 24px;
             }
             #ImageSummaryCard QLabel {
                 background: transparent;
@@ -1027,7 +1048,7 @@ class MainWindow(QMainWindow):
                 border-radius: 26px;
                 border: 1px solid rgba(21, 33, 51, 0.08);
                 background: rgba(255, 255, 255, 0.92);
-                padding: 28px;
+                padding: 24px;
                 font-size: 16px;
                 line-height: 1.95;
                 color: #33465e;

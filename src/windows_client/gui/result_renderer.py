@@ -844,7 +844,7 @@ def _review_product_view_html(product_view: dict[str, object]) -> str:
 
     raw_sections = product_view.get("sections")
     if isinstance(raw_sections, list):
-        sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: int(item.get("priority") or 0))
+        sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: _safe_priority(item))
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
             section_kind = str(item.get("kind") or "").strip()
@@ -877,7 +877,7 @@ def _narrative_product_view_html(product_view: dict[str, object]) -> str:
 
     raw_sections = product_view.get("sections")
     if isinstance(raw_sections, list):
-        sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: int(item.get("priority") or 0))
+        sorted_sections = sorted([item for item in raw_sections if isinstance(item, dict)], key=lambda item: _safe_priority(item))
         for item in sorted_sections:
             title = str(item.get("title") or "").strip()
             blocks_html = _product_view_blocks_html(item.get("blocks"))

@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPointingDevice
 from PySide6.QtWidgets import QApplication, QLabel
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,12 @@ from windows_client.gui.inline_result_view import InlineResultView
 
 def _app():
     return QApplication.instance() or QApplication([])
+
+
+def _write_valid_png(path: Path) -> None:
+    image = QImage(1, 1, QImage.Format_ARGB32)
+    image.fill(QColor("#3a67d6"))
+    image.save(str(path), "PNG")
 
 
 def _make_entry():
@@ -450,6 +458,94 @@ class InlineResultViewTests(unittest.TestCase):
         self.assertEqual(view._content_shell_layout.columnStretch(0), 1)
         self.assertEqual(view._content_shell_layout.columnStretch(1), 0)
         self.assertEqual(view._content_shell_layout.horizontalSpacing(), 0)
+
+    def test_result_view_marks_narrow_layout_state_when_below_breakpoint(self) -> None:
+        view = InlineResultView()
+
+        view._apply_layout_mode(available_width=900)
+
+        self.assertTrue(view.property("isNarrowLayout"))
+
+    def test_result_view_clears_narrow_layout_state_when_above_breakpoint(self) -> None:
+        view = InlineResultView()
+
+        view._apply_layout_mode(available_width=900)
+        view._apply_layout_mode(available_width=1400)
+
+        self.assertFalse(view.property("isNarrowLayout"))
+
+    def test_load_entry_marks_image_led_state_when_valid_insight_card_loads(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            png_path = Path(temp_dir) / "insight_card.png"
+            _write_valid_png(png_path)
+            entry.details = {"visual_findings": [], "insight_card_path": png_path}
+
+            view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertFalse(view._card_frame.isHidden())
+        self.assertTrue(view.property("hasInsightCard"))
+
+    def test_load_entry_keeps_compact_text_state_when_insight_card_is_missing(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertTrue(view._card_frame.isHidden())
+        self.assertFalse(view.property("hasInsightCard"))
+
+    def test_clicking_insight_card_opens_fullscreen_preview(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            png_path = Path(temp_dir) / "insight_card.png"
+            _write_valid_png(png_path)
+            entry.details = {"visual_findings": [], "insight_card_path": png_path}
+            view.load_entry(entry, brief=None, resolved_mode="argument")
+
+            with patch.object(view, "_open_card_fullscreen") as open_preview:
+                event = QMouseEvent(
+                    QMouseEvent.MouseButtonPress,
+                    QPointF(view._card_image_label.rect().center()),
+                    QPointF(view._card_image_label.rect().center()),
+                    QPointF(view._card_image_label.rect().center()),
+                    Qt.LeftButton,
+                    Qt.LeftButton,
+                    Qt.NoModifier,
+                    QPointingDevice.primaryPointingDevice(),
+                )
+                view._card_image_label.mousePressEvent(event)
+
+        open_preview.assert_called_once_with()
+
+    def test_result_view_uses_tighter_stream_spacing_in_narrow_mode(self) -> None:
+        view = InlineResultView()
+
+        view._apply_layout_mode(available_width=900)
+
+        self.assertEqual(view._reading_stream_layout.spacing(), 16)
+
+    def test_missing_insight_card_clears_any_previous_pixmap(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            png_path = Path(temp_dir) / "insight_card.png"
+            _write_valid_png(png_path)
+            entry.details = {"visual_findings": [], "insight_card_path": png_path}
+            view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertIsNotNone(view._card_image_label.pixmap())
+
+        view.load_entry(_make_entry(), brief=None, resolved_mode="argument")
+
+        self.assertTrue(view._card_frame.isHidden())
+        pixmap = view._card_image_label.pixmap()
+        self.assertTrue(pixmap is None or pixmap.isNull())
 
     def test_key_point_items_use_editorial_object_names(self) -> None:
         item = InlineResultView._make_key_point_item(1, "Statement", "Details")

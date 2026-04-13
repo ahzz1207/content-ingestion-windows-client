@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -52,6 +53,17 @@ DOMAIN_LABELS = {
 }
 
 
+class _ClickableImageLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class InlineResultView(QWidget):
     _NARROW_LAYOUT_BREAKPOINT = 1100
     """Full-window widget that renders an InsightBriefV2 as the main content."""
@@ -65,6 +77,7 @@ class InlineResultView(QWidget):
     def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._entry: ResultWorkspaceEntry | None = None
+        self._current_card_path: Path | None = None
         self._update_banner_generation = 0
         self._library_banner_entry_id: str | None = None
         self._library_banner_timer = QTimer(self)
@@ -128,7 +141,7 @@ class InlineResultView(QWidget):
         self._reading_stream_frame.setObjectName("ReadingStream")
         self._reading_stream_layout = QVBoxLayout(self._reading_stream_frame)
         self._reading_stream_layout.setContentsMargins(0, 0, 0, 0)
-        self._reading_stream_layout.setSpacing(20)
+        self._reading_stream_layout.setSpacing(18)
 
         self._reading_stream_shell = QWidget()
         self._reading_stream_shell.setObjectName("ReadingStreamShell")
@@ -196,7 +209,7 @@ class InlineResultView(QWidget):
         self._hero_topbar = QWidget()
         self._hero_topbar.setObjectName("HeroTopBar")
         hero_topbar_layout = QHBoxLayout(self._hero_topbar)
-        hero_topbar_layout.setContentsMargins(32, 24, 32, 0)
+        hero_topbar_layout.setContentsMargins(24, 18, 24, 0)
         hero_topbar_layout.setSpacing(12)
 
         self._hero_action_strip = QWidget()
@@ -215,8 +228,8 @@ class InlineResultView(QWidget):
         self._hero_frame = QFrame()
         self._hero_frame.setObjectName("HeroCard")
         hero_layout = QVBoxLayout(self._hero_frame)
-        hero_layout.setContentsMargins(32, 24, 32, 32)
-        hero_layout.setSpacing(12)
+        hero_layout.setContentsMargins(24, 18, 24, 22)
+        hero_layout.setSpacing(8)
         self._hero_title = QLabel("")
         self._hero_title.setObjectName("ResultTitle")
         self._hero_title.setWordWrap(True)
@@ -227,7 +240,7 @@ class InlineResultView(QWidget):
         self._hero_meta_row.setObjectName("HeroMetaRow")
         hero_meta_layout = QVBoxLayout(self._hero_meta_row)
         hero_meta_layout.setContentsMargins(0, 0, 0, 0)
-        hero_meta_layout.setSpacing(8)
+        hero_meta_layout.setSpacing(6)
         self._hero_byline = QLabel("")
         self._hero_byline.setObjectName("SecondaryText")
         self._hero_byline.setWordWrap(True)
@@ -243,7 +256,7 @@ class InlineResultView(QWidget):
         self._hero_tags_row = QWidget()
         tags_row_layout = QHBoxLayout(self._hero_tags_row)
         tags_row_layout.setContentsMargins(0, 0, 0, 0)
-        tags_row_layout.setSpacing(8)
+        tags_row_layout.setSpacing(6)
         self._mode_chip = QLabel("")
         self._mode_chip.setObjectName("TagChip")
         self._content_kind_chip = QLabel("")
@@ -322,8 +335,9 @@ class InlineResultView(QWidget):
         _save_row.addWidget(self._image_summary_heading)
         _save_row.addStretch(1)
         _save_row.addWidget(self._card_save_btn)
-        self._card_image_label = QLabel()
+        self._card_image_label = _ClickableImageLabel()
         self._card_image_label.setAlignment(Qt.AlignLeft)
+        self._card_image_label.clicked.connect(lambda: self._open_card_fullscreen())
         _cfl.addLayout(_save_row)
         _cfl.addWidget(self._card_image_label)
         self._card_frame.hide()
@@ -455,8 +469,25 @@ class InlineResultView(QWidget):
         super().resizeEvent(event)
         self._apply_layout_mode(event.size().width())
 
+    def _set_layout_state(self, *, narrow: bool) -> None:
+        self._reading_stream_layout.setSpacing(16 if narrow else 18)
+        widgets = (
+            self,
+            self._hero_shell,
+            self._hero_frame,
+            self._hero_topbar,
+            self._hero_action_strip,
+            self._card_frame,
+            self._reading_stream_frame,
+        )
+        for widget in widgets:
+            widget.setProperty("isNarrowLayout", narrow)
+            widget.update()
+
     def _apply_layout_mode(self, available_width: int) -> None:
-        if available_width <= self._NARROW_LAYOUT_BREAKPOINT:
+        narrow = available_width <= self._NARROW_LAYOUT_BREAKPOINT
+        self._set_layout_state(narrow=narrow)
+        if narrow:
             self._content_shell_layout.setHorizontalSpacing(0)
             self._content_shell_layout.setColumnStretch(0, 1)
             self._content_shell_layout.setColumnStretch(1, 0)
@@ -468,6 +499,32 @@ class InlineResultView(QWidget):
         self._content_shell_layout.setColumnStretch(1, 1)
         self._content_shell_layout.addWidget(self._reading_stream_shell, 0, 0)
         self._content_shell_layout.addWidget(self._context_rail_shell, 0, 1)
+
+    def _set_insight_card_state(self, has_card: bool) -> None:
+        widgets = (self, self._card_frame, self._reading_stream_frame)
+        for widget in widgets:
+            widget.setProperty("hasInsightCard", has_card)
+            widget.update()
+
+    def _load_insight_card(self, card_path: object) -> None:
+        self._current_card_path = None
+        self._card_image_label.clear()
+        if card_path is None:
+            self._card_frame.hide()
+            self._set_insight_card_state(False)
+            return
+        pixmap = QPixmap(str(card_path))
+        if pixmap.isNull():
+            self._card_frame.hide()
+            self._set_insight_card_state(False)
+            return
+        max_width = 820 if not self.property("isNarrowLayout") else 760
+        if pixmap.width() > max_width:
+            pixmap = pixmap.scaledToWidth(max_width, Qt.SmoothTransformation)
+        self._card_image_label.setPixmap(pixmap)
+        self._current_card_path = Path(card_path)
+        self._card_frame.show()
+        self._set_insight_card_state(True)
 
     def load_entry(
         self,
@@ -678,18 +735,7 @@ class InlineResultView(QWidget):
         self._visual_frame.setVisible(rendered_visual_findings > 0)
 
         # Insight card image (shown when PNG exists)
-        card_path = entry.details.get("insight_card_path")
-        if card_path is not None:
-            pixmap = QPixmap(str(card_path))
-            if not pixmap.isNull():
-                if pixmap.width() > 700:
-                    pixmap = pixmap.scaledToWidth(700, Qt.SmoothTransformation)
-                self._card_image_label.setPixmap(pixmap)
-                self._card_frame.show()
-            else:
-                self._card_frame.hide()
-        else:
-            self._card_frame.hide()
+        self._load_insight_card(entry.details.get("insight_card_path"))
 
         if product_view is not None:
             sections: list[str] = []
@@ -956,6 +1002,28 @@ class InlineResultView(QWidget):
     def _restore_card_save_btn(self) -> None:
         self._card_save_btn.setEnabled(True)
         self._card_save_btn.setText("保存图片")
+
+    def _open_card_fullscreen(self) -> None:
+        if self._current_card_path is None:
+            return
+        pixmap = QPixmap(str(self._current_card_path))
+        if pixmap.isNull():
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("视觉总结")
+        screen = self.screen()
+        available_height = screen.availableGeometry().height() if screen is not None else 1080
+        dialog.resize(900, min(1200, max(480, available_height - 80)))
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        label = QLabel()
+        label.setAlignment(Qt.AlignCenter)
+        label.setPixmap(pixmap)
+        scroll.setWidget(label)
+        layout.addWidget(scroll)
+        dialog.exec()
 
     def _open_folder(self) -> None:
         if self._entry is None or self._entry.job_dir is None:
