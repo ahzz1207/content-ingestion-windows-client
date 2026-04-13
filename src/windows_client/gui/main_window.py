@@ -9,12 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal as _Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal as _Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -34,9 +35,20 @@ from PySide6.QtWidgets import (
 
 from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
 from windows_client.app.service import ReinterpretRequest
-from windows_client.app.view_models import OperationViewState
+from windows_client.app.view_models import JobExportSnapshot, OperationViewState
 from windows_client.app.workflow import WindowsClientWorkflow
 from windows_client.app.wsl_bridge import WslBridge
+from windows_client.app.input_router import (
+    FilePayload,
+    ImagePayload,
+    LocalInputError,
+    TextPayload,
+    UrlPayload,
+    route_clipboard_image,
+    route_file,
+    route_text,
+)
+from windows_client.app.local_file_job import submit_local
 from windows_client.gui.inline_result_view import InlineResultView
 from windows_client.gui.library_panel import LibraryDialog
 from windows_client.gui.platform_router import PlatformRoute, resolve_platform_route
@@ -428,6 +440,7 @@ class MainWindow(QMainWindow):
         self._set_pills([("Checking status…", True)])
         self._launch_status_refresh()
         self._watcher_poll_timer.start()
+        self.setAcceptDrops(True)
         self._show_ready_state()
 
     def _build_ui(self) -> None:
@@ -512,6 +525,7 @@ class MainWindow(QMainWindow):
         self.url_input.returnPressed.connect(self._start_from_input)
         self.url_input.textChanged.connect(self._sync_video_download_controls)
         self.url_input.setObjectName("UrlInput")
+        self.url_input.installEventFilter(self)
 
         self.analysis_mode_combo = QComboBox()
         self.analysis_mode_combo.setObjectName("GhostButton")
@@ -533,6 +547,10 @@ class MainWindow(QMainWindow):
         self.start_button.setCursor(Qt.PointingHandCursor)
         self.start_button.clicked.connect(self._start_from_input)
         self.start_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.open_file_button = QPushButton("打开文件")
+        self.open_file_button.setObjectName("GhostButton")
+        self.open_file_button.clicked.connect(self._on_open_file)
+        self.open_file_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.latest_result_button = QPushButton("History")
         self.latest_result_button.setObjectName("GhostButton")
         self.latest_result_button.clicked.connect(self._open_latest_result)
@@ -544,6 +562,7 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         actions.addWidget(self.start_button)
+        actions.addWidget(self.open_file_button)
         actions.addWidget(self.latest_result_button)
         actions.addWidget(self.library_button)
         actions.addStretch(1)
@@ -984,6 +1003,10 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 color: #152133;
             }
+            #UrlInput[dragActive="true"] {
+                border: 2px solid rgba(58, 103, 214, 0.58);
+                background: rgba(229, 238, 252, 0.98);
+            }
             #PrimaryButton, #GhostButton, QToolButton {
                 min-height: 46px;
                 border-radius: 18px;
@@ -1191,9 +1214,18 @@ class MainWindow(QMainWindow):
         self._show_ready_state()
 
     def _start_from_input(self) -> None:
-        url = self.url_input.text().strip()
-        if not url:
+        text = self.url_input.text().strip()
+        if not text:
             return
+        try:
+            routed = route_text(text)
+        except LocalInputError as exc:
+            self.footer_label.setText(str(exc))
+            return
+        if not isinstance(routed, UrlPayload):
+            self._submit_local_payload(routed)
+            return
+        url = routed.url
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             QMessageBox.warning(self, "Unsupported URL", "Please enter a full http or https URL.")
@@ -1223,6 +1255,139 @@ class MainWindow(QMainWindow):
                 return
             self._refresh_environment_status()
         self._run_export(route=route, url=url)
+
+    def _submit_local_payload(self, payload: FilePayload | ImagePayload | TextPayload) -> None:
+        """Package a local payload into the inbox and start polling."""
+        shared_root = self.workflow.service.settings.effective_shared_inbox_root
+        try:
+            job_id = submit_local(
+                payload,
+                shared_root=shared_root,
+                requested_mode=self._selected_requested_mode(),
+            )
+        except Exception as exc:
+            self.footer_label.setText(f"提交失败：{exc}")
+            return
+        job_dir = shared_root / "incoming" / job_id
+        self._current_state = OperationViewState(
+            operation="submit-local-payload",
+            status="success",
+            summary="ok",
+            job=JobExportSnapshot(
+                job_id=job_id,
+                job_dir=job_dir,
+                payload_path=self._first_payload_path(job_dir),
+                metadata_path=job_dir / "metadata.json",
+                ready_path=job_dir / "READY",
+            ),
+        )
+        self.stack.setCurrentWidget(self.task_page)
+        self.stage_label.setText(STAGE_LABELS["processing"])
+        self.result_summary.setText("本地内容已提交，正在分析中…")
+        self.result_summary.show()
+        self._start_result_polling()
+        # Kick off a one-shot scan so local jobs are processed even when the
+        # background watcher isn't running.  Race with a live watcher is safe:
+        # claim_job() handles FileNotFoundError when another process already
+        # moved the job to processing/.
+        self._trigger_watch_once(shared_root)
+
+    def _trigger_watch_once(self, shared_root: Path) -> None:
+        """Run watch-inbox --once in a daemon thread so local jobs are picked up immediately."""
+        def _worker() -> None:
+            try:
+                self.wsl_bridge.watch_once(shared_root=shared_root)
+            except Exception:
+                pass  # watcher errors are non-fatal; polling will retry
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _first_payload_path(self, job_dir: Path) -> Path:
+        for name in (
+            "payload.pdf",
+            "payload.png",
+            "payload.jpg",
+            "payload.jpeg",
+            "payload.webp",
+            "payload.gif",
+            "payload.txt",
+            "payload.md",
+        ):
+            path = job_dir / name
+            if path.exists():
+                return path
+        return job_dir / "payload.txt"
+
+    def _on_open_file(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "打开文件",
+            "",
+            "支持的文件 (*.pdf *.png *.jpg *.jpeg *.webp *.gif *.txt *.md)",
+        )
+        if not path_str:
+            return
+        try:
+            payload = route_file(Path(path_str))
+        except LocalInputError as exc:
+            self.footer_label.setText(str(exc))
+            return
+        self._submit_local_payload(payload)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        md = event.mimeData()
+        if md.hasUrls() or md.hasText():
+            self.url_input.setProperty("dragActive", True)
+            self.url_input.style().unpolish(self.url_input)
+            self.url_input.style().polish(self.url_input)
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        self.url_input.setProperty("dragActive", False)
+        self.url_input.style().unpolish(self.url_input)
+        self.url_input.style().polish(self.url_input)
+        md = event.mimeData()
+        if md.hasUrls():
+            url = md.urls()[0]
+            if url.isLocalFile():
+                try:
+                    payload = route_file(Path(url.toLocalFile()))
+                except LocalInputError as exc:
+                    self.footer_label.setText(str(exc))
+                    return
+                self._submit_local_payload(payload)
+            else:
+                self.url_input.setText(url.toString())
+                self._start_from_input()
+        elif md.hasText():
+            self.url_input.setText(md.text())
+            self._start_from_input()
+
+    def eventFilter(self, obj, event) -> bool:  # type: ignore[override]
+        from PySide6.QtGui import QKeySequence
+        from PySide6.QtWidgets import QApplication
+
+        if obj is self.url_input and event.type() == QEvent.KeyPress and event.matches(QKeySequence.Paste):
+            clipboard = QApplication.clipboard()
+            mime = clipboard.mimeData()
+            if mime.hasImage():
+                img = clipboard.image()
+                if not img.isNull():
+                    from PySide6.QtCore import QBuffer, QIODevice
+
+                    buf = QBuffer()
+                    buf.open(QIODevice.WriteOnly)
+                    img.save(buf, "PNG")
+                    data = bytes(buf.data())
+                    try:
+                        payload = route_clipboard_image(data)
+                    except LocalInputError as exc:
+                        self.footer_label.setText(str(exc))
+                        return True
+                    self.footer_label.setText("检测到图片，正在提交本地图片...")
+                    self._submit_local_payload(payload)
+                    return True
+        return super().eventFilter(obj, event)
 
     def _run_export(self, *, route: PlatformRoute, url: str, force_browser: bool = False) -> None:
         if self._task_thread is not None and self._task_thread.isRunning():

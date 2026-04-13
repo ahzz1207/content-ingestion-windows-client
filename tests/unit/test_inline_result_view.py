@@ -78,6 +78,39 @@ class InlineResultViewTests(unittest.TestCase):
         self.assertFalse(view.open_library_button.isHidden())
         self.assertTrue(view.open_library_button.isEnabled())
 
+    def test_local_file_entry_hides_raw_file_url_in_hero_source(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.platform = "local"
+        entry.source_url = "file:///H:/docs/report.pdf"
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertTrue(view._hero_source.isHidden())
+        self.assertIn("report.pdf", view._hero_byline.text())
+
+    def test_local_virtual_source_hides_raw_local_url_in_hero_source(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.platform = "local"
+        entry.source_url = "local://text/job-1"
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertTrue(view._hero_source.isHidden())
+        self.assertIn("本地文件", view._hero_byline.text())
+
+    def test_local_entry_without_title_uses_untitled_document_fallback(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.platform = "local"
+        entry.title = ""
+        entry.source_url = "local://text/job-1"
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertEqual(view._hero_title.text(), "未命名文档")
+
     def test_show_library_save_banner_makes_feedback_visible(self) -> None:
         view = InlineResultView()
 
