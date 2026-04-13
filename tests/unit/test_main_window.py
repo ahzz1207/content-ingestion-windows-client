@@ -2,8 +2,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
+from PySide6.QtCore import QEvent, QMimeData, QPointF, Qt, QUrl
+from PySide6.QtGui import QDropEvent, QImage, QKeyEvent
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
@@ -94,6 +96,11 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("#HeroMetaRow", stylesheet)
         self.assertIn("#ReadingStreamShell", stylesheet)
         self.assertIn("#ContextRailShell", stylesheet)
+
+    def test_main_window_stylesheet_contains_drag_active_hook_for_url_input(self) -> None:
+        stylesheet = self.window.styleSheet()
+
+        self.assertIn('#UrlInput[dragActive="true"]', stylesheet)
 
     def test_render_success_starts_result_polling_without_manual_refresh_button(self) -> None:
         metadata_path = self.window._current_state.job.metadata_path
@@ -234,6 +241,104 @@ class MainWindowTests(unittest.TestCase):
                 "video_download_mode": "audio",
             }
         ])
+
+    def test_start_from_input_routes_long_text_to_local_submission(self) -> None:
+        self.window.url_input.setText("这是一段很长的文章内容" * 10)
+
+        with patch("windows_client.gui.main_window.submit_local", return_value="job-local-1") as submit_local:
+            with patch.object(self.window, "_start_result_polling") as start_polling:
+                self.window._start_from_input()
+
+        payload = submit_local.call_args.args[0]
+        self.assertEqual(type(payload).__name__, "TextPayload")
+        self.assertEqual(payload.text, ("这是一段很长的文章内容" * 10).strip())
+        self.assertEqual(submit_local.call_args.kwargs["shared_root"], self.shared_root)
+        self.assertEqual(submit_local.call_args.kwargs["requested_mode"], "auto")
+        self.assertEqual(self.window._current_state.job.job_id, "job-local-1")
+        start_polling.assert_called_once_with()
+
+    def test_open_file_routes_supported_file_to_local_submission(self) -> None:
+        pdf = Path(self.temp_dir.name) / "report.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        with patch("windows_client.gui.main_window.QFileDialog.getOpenFileName", return_value=(str(pdf), "")):
+            with patch("windows_client.gui.main_window.submit_local", return_value="job-local-2") as submit_local:
+                with patch.object(self.window, "_start_result_polling") as start_polling:
+                    with patch.object(self.window, "_trigger_watch_once") as trigger_watch:
+                        self.window._on_open_file()
+
+        payload = submit_local.call_args.args[0]
+        self.assertEqual(type(payload).__name__, "FilePayload")
+        self.assertEqual(payload.path, pdf)
+        self.assertEqual(payload.content_type, "pdf")
+        self.assertEqual(self.window._current_state.job.job_id, "job-local-2")
+        start_polling.assert_called_once_with()
+        trigger_watch.assert_called_once()
+
+    def test_submit_local_payload_shows_footer_on_failure(self) -> None:
+        from windows_client.app.input_router import TextPayload
+
+        with patch("windows_client.gui.main_window.submit_local", side_effect=RuntimeError("disk full")):
+            self.window._submit_local_payload(TextPayload(text="这是一段很长的文章内容" * 10))
+
+        self.assertEqual(self.window.footer_label.text(), "提交失败：disk full")
+
+    def test_drop_event_routes_local_file_to_local_submission(self) -> None:
+        pdf = Path(self.temp_dir.name) / "drop.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(pdf))])
+        event = QDropEvent(
+            QPointF(10, 10),
+            Qt.CopyAction,
+            mime,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+
+        with patch.object(self.window, "_submit_local_payload") as submit_payload:
+            self.window.dropEvent(event)
+
+        payload = submit_payload.call_args.args[0]
+        self.assertEqual(type(payload).__name__, "FilePayload")
+        self.assertEqual(payload.path, pdf)
+        self.assertFalse(self.window.url_input.property("dragActive"))
+
+    def test_drag_enter_event_marks_url_input_drag_active(self) -> None:
+        mime = QMimeData()
+        mime.setText("拖入文本")
+
+        class _Event:
+            def __init__(self, mime_data):
+                self._mime = mime_data
+                self.accepted = False
+
+            def mimeData(self):
+                return self._mime
+
+            def acceptProposedAction(self):
+                self.accepted = True
+
+        event = _Event(mime)
+        self.window.dragEnterEvent(event)
+
+        self.assertTrue(event.accepted)
+        self.assertTrue(self.window.url_input.property("dragActive"))
+
+    def test_event_filter_routes_clipboard_image_to_local_submission(self) -> None:
+        image = QImage(2, 2, QImage.Format_ARGB32)
+        image.fill(Qt.red)
+        QApplication.clipboard().setImage(image)
+        event = QKeyEvent(QEvent.KeyPress, Qt.Key_V, Qt.ControlModifier)
+
+        with patch.object(self.window, "_submit_local_payload") as submit_payload:
+            handled = self.window.eventFilter(self.window.url_input, event)
+
+        self.assertTrue(handled)
+        payload = submit_payload.call_args.args[0]
+        self.assertEqual(type(payload).__name__, "ImagePayload")
+        self.assertEqual(payload.suffix, ".png")
+        self.assertEqual(self.window.footer_label.text(), "检测到图片，正在提交本地图片...")
 
     def test_wechat_article_start_does_not_force_login_prompt(self) -> None:
         self.window._watcher_running = True

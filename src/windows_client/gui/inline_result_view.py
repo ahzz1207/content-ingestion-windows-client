@@ -492,7 +492,7 @@ class InlineResultView(QWidget):
 
         # Hero fields common to both paths
         source = entry.source_url or entry.canonical_url
-        if source:
+        if source and not self._is_local_source(source):
             display = source if len(source) <= 72 else source[:69] + "…"
             self._hero_source.setText(f"<a href='{html.escape(source)}'>{html.escape(display)}</a>")
             self._hero_source.show()
@@ -506,11 +506,12 @@ class InlineResultView(QWidget):
 
         if brief is not None:
             # Full view
-            self._hero_title.setText(brief.hero.title)
+            resolved_title = str(brief.hero.title or "").strip() or entry.title or self._local_title_fallback(entry)
+            self._hero_title.setText(resolved_title)
             hero_take = str(brief.hero.one_sentence_take or "").strip()
             self._hero_take.setText(hero_take)
             self._hero_take.setVisible(bool(hero_take and not self._looks_like_duplicate(hero_take, brief.hero.title)))
-            byline_parts = [v for v in (entry.author, entry.published_at, entry.platform) if v]
+            byline_parts = self._byline_parts(entry)
             self._hero_byline.setText("  ·  ".join(byline_parts) if byline_parts else "")
             self._hero_byline.setVisible(bool(byline_parts))
 
@@ -609,11 +610,11 @@ class InlineResultView(QWidget):
                 if product_hero
                 else ""
             )
-            self._hero_title.setText(hero_title or entry.title or "解读已完成")
+            self._hero_title.setText(hero_title or entry.title or self._local_title_fallback(entry))
             resolved_take = hero_take or getattr(entry, "summary", "") or ""
             self._hero_take.setText(resolved_take)
             self._hero_take.setVisible(bool(resolved_take and not self._looks_like_duplicate(resolved_take, self._hero_title.text())))
-            byline_parts = [v for v in (entry.author, entry.published_at, entry.platform) if v]
+            byline_parts = self._byline_parts(entry)
             self._hero_byline.setText("  ·  ".join(byline_parts) if byline_parts else "")
             self._hero_byline.setVisible(bool(byline_parts))
             self._mode_chip.setText(mode_label)
@@ -762,6 +763,33 @@ class InlineResultView(QWidget):
             or ""
         ).strip()
         return DOMAIN_LABELS.get(value, value.replace("_", " ").strip())
+
+    @staticmethod
+    def _is_local_source(source: str | None) -> bool:
+        value = str(source or "").strip().lower()
+        return value.startswith("file://") or value.startswith("local://")
+
+    @staticmethod
+    def _local_title_fallback(entry: ResultWorkspaceEntry) -> str:
+        if str(getattr(entry, "platform", "") or "").strip().lower() == "local":
+            source = str(getattr(entry, "source_url", "") or "").strip()
+            if source.startswith("file://"):
+                return Path(source.replace("file:///", "", 1)).name or "未命名文档"
+            return "未命名文档"
+        return "解读已完成"
+
+    @staticmethod
+    def _byline_parts(entry: ResultWorkspaceEntry) -> list[str]:
+        platform = str(getattr(entry, "platform", "") or "").strip()
+        source = str(getattr(entry, "source_url", "") or getattr(entry, "canonical_url", "") or "").strip()
+        if platform.lower() == "local":
+            label = "本地文件"
+            if source.startswith("file://"):
+                label = Path(source.replace("file:///", "", 1)).name or label
+            parts = [v for v in (getattr(entry, "author", ""), getattr(entry, "published_at", ""), label) if v]
+            return [str(v) for v in parts]
+        parts = [v for v in (getattr(entry, "author", ""), getattr(entry, "published_at", ""), platform) if v]
+        return [str(v) for v in parts]
 
     def show_update_banner(self, message: str) -> None:
         text = message.strip()
