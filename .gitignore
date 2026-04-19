@@ -14,6 +14,7 @@ data/shared_inbox/incoming/
 data/shared_inbox/processing/
 data/shared_inbox/processed/
 data/shared_inbox/failed/
+data/shared_inbox/library/
 data/wsl-watch-state.json
 data/wsl-watch.log
 !data/.gitkeep

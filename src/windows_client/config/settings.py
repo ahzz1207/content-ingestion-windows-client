@@ -1,4 +1,5 @@
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,9 +18,19 @@ def _read_path_env(name: str) -> Path | None:
     return Path(value)
 
 
+def _resolve_default_project_root() -> Path:
+    override = _read_path_env("CONTENT_INGESTION_PROJECT_ROOT")
+    if override is not None:
+        return override
+    if getattr(sys, "frozen", False):
+        # PyInstaller bundle: exe lives at {project_root}/dist/<name>.exe
+        return Path(sys.executable).resolve().parent.parent
+    return Path(__file__).resolve().parents[3]
+
+
 @dataclass(slots=True)
 class Settings:
-    project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[3])
+    project_root: Path = field(default_factory=_resolve_default_project_root)
     shared_inbox_root: Path | None = field(default_factory=lambda: _read_path_env("CONTENT_INGESTION_SHARED_INBOX_ROOT"))
     wsl_project_root: str = field(
         default_factory=lambda: os.getenv("CONTENT_INGESTION_WSL_PROJECT_ROOT", "/home/ahzz1207/codex-demo")

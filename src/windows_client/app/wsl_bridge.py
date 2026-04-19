@@ -90,10 +90,18 @@ class WslBridge:
             ]
         )
         script = "; ".join(exports)
+        detach_flags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
         process = subprocess.Popen(
             ["wsl.exe", "-e", "bash", "-lc", script],
             close_fds=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=detach_flags,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         state = WslWatchState(
             pid=process.pid,
