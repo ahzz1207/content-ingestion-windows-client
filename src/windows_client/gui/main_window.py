@@ -1269,6 +1269,7 @@ class MainWindow(QMainWindow):
             self.footer_label.setText(f"提交失败：{exc}")
             return
         job_dir = shared_root / "incoming" / job_id
+        self._stop_result_polling()
         self._current_state = OperationViewState(
             operation="submit-local-payload",
             status="success",
@@ -1281,10 +1282,21 @@ class MainWindow(QMainWindow):
                 ready_path=job_dir / "READY",
             ),
         )
+        self.domain_label.setText(self._local_payload_domain_label(payload))
+        self.platform_label.setText("本地内容")
         self.stack.setCurrentWidget(self.task_page)
         self.stage_label.setText(STAGE_LABELS["processing"])
+        self.result_title.clear()
         self.result_summary.setText("本地内容已提交，正在分析中…")
         self.result_summary.show()
+        self.details_toggle.setChecked(False)
+        self.details_text.hide()
+        self.details_toggle.show()
+        self.new_url_button.hide()
+        self.retry_button.hide()
+        self.retry_browser_button.hide()
+        self.back_button.setEnabled(True)
+        self.progress_bar.show()
         self._start_result_polling()
         # Kick off a one-shot scan so local jobs are processed even when the
         # background watcher isn't running.  Race with a live watcher is safe:
@@ -1301,6 +1313,13 @@ class MainWindow(QMainWindow):
                 pass  # watcher errors are non-fatal; polling will retry
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _local_payload_domain_label(self, payload: FilePayload | ImagePayload | TextPayload) -> str:
+        if isinstance(payload, FilePayload):
+            return payload.path.name
+        if isinstance(payload, ImagePayload):
+            return "本地图片"
+        return "本地文本"
 
     def _first_payload_path(self, job_dir: Path) -> Path:
         for name in (
@@ -1367,7 +1386,14 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QKeySequence
         from PySide6.QtWidgets import QApplication
 
-        if obj is self.url_input and event.type() == QEvent.KeyPress and event.matches(QKeySequence.Paste):
+        is_paste = (
+            event.type() == QEvent.KeyPress
+            and (
+                event.matches(QKeySequence.Paste)
+                or (event.key() == Qt.Key_V and bool(event.modifiers() & Qt.ControlModifier))
+            )
+        )
+        if obj is self.url_input and is_paste:
             clipboard = QApplication.clipboard()
             mime = clipboard.mimeData()
             if mime.hasImage():
@@ -1782,11 +1808,22 @@ class MainWindow(QMainWindow):
             self._latest_result_entry = None
             return "unavailable"
         if result_entry is None:
-            self.result_summary.setText(
-                "No analysis result yet."
-                if not from_auto_poll
-                else "Waiting for the processor to pick this up..."
-            )
+            if from_auto_poll:
+                if self._poll_elapsed_seconds() >= AUTO_RESULT_POLL_TIMEOUT_SECONDS:
+                    self.result_summary.setText("Analysis is still in progress. Check back later.")
+                    self.result_summary.show()
+                    self._latest_result_entry = None
+                    return "missing"
+                self.result_summary.setText("处理任务未找到，可能已失效或被清理。请返回后重新提交。")
+                self.result_summary.show()
+                self.retry_button.show()
+                self.new_url_button.show()
+                self._latest_result_entry = None
+                self._stop_result_polling()
+                self._elapsed_timer.stop()
+                self._elapsed_label.hide()
+                return "failed"
+            self.result_summary.setText("No analysis result yet.")
             self._latest_result_entry = None
             return "missing"
         if result_entry.state == "processed":

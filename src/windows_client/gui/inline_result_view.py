@@ -7,12 +7,13 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -62,6 +63,24 @@ class _ClickableImageLabel(QLabel):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+def _rounded_pixmap(source: QPixmap, radius: int) -> QPixmap:
+    if source.isNull():
+        return source
+    rounded = QPixmap(source.size())
+    rounded.fill(Qt.transparent)
+    painter = QPainter(rounded)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, source.width(), source.height(), radius, radius)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, source)
+    finally:
+        painter.end()
+    return rounded
 
 
 class InlineResultView(QWidget):
@@ -230,12 +249,30 @@ class InlineResultView(QWidget):
         hero_layout = QVBoxLayout(self._hero_frame)
         hero_layout.setContentsMargins(24, 18, 24, 22)
         hero_layout.setSpacing(8)
+        hero_title_row = QHBoxLayout()
+        hero_title_row.setContentsMargins(0, 0, 0, 0)
+        hero_title_row.setSpacing(12)
         self._hero_title = QLabel("")
         self._hero_title.setObjectName("ResultTitle")
         self._hero_title.setWordWrap(True)
+        self._title_copy_btn = QPushButton("复制")
+        self._title_copy_btn.setObjectName("GhostButton")
+        self._title_copy_btn.clicked.connect(self._copy_title)
+        self._title_copy_btn.setMinimumHeight(34)
+        hero_title_row.addWidget(self._hero_title, 1)
+        hero_title_row.addWidget(self._title_copy_btn, 0, Qt.AlignTop)
+        hero_take_row = QHBoxLayout()
+        hero_take_row.setContentsMargins(0, 0, 0, 0)
+        hero_take_row.setSpacing(12)
         self._hero_take = QLabel("")
         self._hero_take.setObjectName("HeroTake")
         self._hero_take.setWordWrap(True)
+        self._take_copy_btn = QPushButton("复制")
+        self._take_copy_btn.setObjectName("GhostButton")
+        self._take_copy_btn.clicked.connect(self._copy_take)
+        self._take_copy_btn.setMinimumHeight(32)
+        hero_take_row.addWidget(self._hero_take, 1)
+        hero_take_row.addWidget(self._take_copy_btn, 0, Qt.AlignTop)
         self._hero_meta_row = QWidget()
         self._hero_meta_row.setObjectName("HeroMetaRow")
         hero_meta_layout = QVBoxLayout(self._hero_meta_row)
@@ -271,8 +308,8 @@ class InlineResultView(QWidget):
         tags_row_layout.addWidget(self._author_stance_chip)
         tags_row_layout.addStretch(1)
         self._hero_tags_row.hide()
-        hero_layout.addWidget(self._hero_title)
-        hero_layout.addWidget(self._hero_take)
+        hero_layout.addLayout(hero_title_row)
+        hero_layout.addLayout(hero_take_row)
         hero_layout.addWidget(self._hero_meta_row)
         hero_layout.addWidget(self._hero_tags_row)
         hero_shell_layout.addWidget(self._hero_topbar)
@@ -324,22 +361,32 @@ class InlineResultView(QWidget):
         self._card_frame = QFrame()
         self._card_frame.setObjectName("ImageSummaryCard")
         _cfl = QVBoxLayout(self._card_frame)
-        _cfl.setContentsMargins(0, 4, 0, 4)
-        _cfl.setSpacing(8)
+        _cfl.setContentsMargins(24, 20, 24, 24)
+        _cfl.setSpacing(12)
         self._image_summary_heading = QLabel("视觉总结")
         self._image_summary_heading.setObjectName("SectionLabel")
         _save_row = QHBoxLayout()
+        self._card_copy_btn = QPushButton("复制图片")
+        self._card_copy_btn.setObjectName("GhostButton")
+        self._card_copy_btn.clicked.connect(self._copy_image_to_clipboard)
         self._card_save_btn = QPushButton("保存图片")
         self._card_save_btn.setObjectName("GhostButton")
         self._card_save_btn.clicked.connect(self._save_insight_card)
         _save_row.addWidget(self._image_summary_heading)
         _save_row.addStretch(1)
+        _save_row.addWidget(self._card_copy_btn)
         _save_row.addWidget(self._card_save_btn)
         self._card_image_label = _ClickableImageLabel()
-        self._card_image_label.setAlignment(Qt.AlignLeft)
+        self._card_image_label.setAlignment(Qt.AlignCenter)
+        self._card_image_label.setCursor(Qt.PointingHandCursor)
         self._card_image_label.clicked.connect(lambda: self._open_card_fullscreen())
+        _card_shadow = QGraphicsDropShadowEffect(self._card_image_label)
+        _card_shadow.setBlurRadius(32)
+        _card_shadow.setOffset(0, 8)
+        _card_shadow.setColor(QColor(21, 33, 51, 48))
+        self._card_image_label.setGraphicsEffect(_card_shadow)
         _cfl.addLayout(_save_row)
-        _cfl.addWidget(self._card_image_label)
+        _cfl.addWidget(self._card_image_label, 0, Qt.AlignHCenter)
         self._card_frame.hide()
 
         # Divergent thinking block (延伸思考 — analysis items: implication / alternative)
@@ -505,6 +552,7 @@ class InlineResultView(QWidget):
         for widget in widgets:
             widget.setProperty("hasInsightCard", has_card)
             widget.update()
+        self._card_copy_btn.setEnabled(has_card)
 
     def _load_insight_card(self, card_path: object) -> None:
         self._current_card_path = None
@@ -521,6 +569,7 @@ class InlineResultView(QWidget):
         max_width = 820 if not self.property("isNarrowLayout") else 760
         if pixmap.width() > max_width:
             pixmap = pixmap.scaledToWidth(max_width, Qt.SmoothTransformation)
+        pixmap = _rounded_pixmap(pixmap, 20)
         self._card_image_label.setPixmap(pixmap)
         self._current_card_path = Path(card_path)
         self._card_frame.show()
@@ -567,7 +616,9 @@ class InlineResultView(QWidget):
             self._hero_title.setText(resolved_title)
             hero_take = str(brief.hero.one_sentence_take or "").strip()
             self._hero_take.setText(hero_take)
-            self._hero_take.setVisible(bool(hero_take and not self._looks_like_duplicate(hero_take, brief.hero.title)))
+            take_visible = bool(hero_take and not self._looks_like_duplicate(hero_take, self._hero_title.text()))
+            self._hero_take.setVisible(take_visible)
+            self._take_copy_btn.setVisible(take_visible)
             byline_parts = self._byline_parts(entry)
             self._hero_byline.setText("  ·  ".join(byline_parts) if byline_parts else "")
             self._hero_byline.setVisible(bool(byline_parts))
@@ -670,7 +721,9 @@ class InlineResultView(QWidget):
             self._hero_title.setText(hero_title or entry.title or self._local_title_fallback(entry))
             resolved_take = hero_take or getattr(entry, "summary", "") or ""
             self._hero_take.setText(resolved_take)
-            self._hero_take.setVisible(bool(resolved_take and not self._looks_like_duplicate(resolved_take, self._hero_title.text())))
+            take_visible = bool(resolved_take and not self._looks_like_duplicate(resolved_take, self._hero_title.text()))
+            self._hero_take.setVisible(take_visible)
+            self._take_copy_btn.setVisible(take_visible)
             byline_parts = self._byline_parts(entry)
             self._hero_byline.setText("  ·  ".join(byline_parts) if byline_parts else "")
             self._hero_byline.setVisible(bool(byline_parts))
@@ -892,6 +945,45 @@ class InlineResultView(QWidget):
     def _restore_copy_button(self) -> None:
         self._copy_btn.setEnabled(True)
         self._copy_btn.setText("复制")
+
+    def _copy_title(self) -> None:
+        text = self._hero_title.text().strip()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._title_copy_btn.setEnabled(False)
+        self._title_copy_btn.setText("已复制")
+        QTimer.singleShot(1500, self._restore_title_copy_button)
+
+    def _restore_title_copy_button(self) -> None:
+        self._title_copy_btn.setEnabled(True)
+        self._title_copy_btn.setText("复制")
+
+    def _copy_take(self) -> None:
+        text = self._hero_take.text().strip()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._take_copy_btn.setEnabled(False)
+        self._take_copy_btn.setText("已复制")
+        QTimer.singleShot(1500, self._restore_take_copy_button)
+
+    def _restore_take_copy_button(self) -> None:
+        self._take_copy_btn.setEnabled(True)
+        self._take_copy_btn.setText("复制")
+
+    def _copy_image_to_clipboard(self) -> None:
+        pixmap = self._card_image_label.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return
+        QApplication.clipboard().setPixmap(pixmap)
+        self._card_copy_btn.setEnabled(False)
+        self._card_copy_btn.setText("已复制")
+        QTimer.singleShot(1500, self._restore_card_copy_button)
+
+    def _restore_card_copy_button(self) -> None:
+        self._card_copy_btn.setEnabled(True)
+        self._card_copy_btn.setText("复制图片")
 
     def _save_as_markdown(self) -> None:
         if self._entry is None:

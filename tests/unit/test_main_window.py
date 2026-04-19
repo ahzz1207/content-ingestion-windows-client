@@ -152,6 +152,25 @@ class MainWindowTests(unittest.TestCase):
         self.assertTrue(self.window._elapsed_label.isHidden())
         self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
 
+    def test_poll_current_job_result_switches_to_processed_result_when_job_completes(self) -> None:
+        processed_entry = _processed_entry("job-123")
+
+        with patch("windows_client.gui.main_window.load_job_result", return_value=processed_entry):
+            self.window._poll_current_job_result()
+
+        self.assertEqual(self.window._latest_result_entry.state, "processed")
+        self.assertIs(self.window.stack.currentWidget(), self.window.result_inline)
+        self.assertFalse(self.window._result_poll_timer.isActive())
+
+    def test_poll_current_job_result_switches_to_failed_state_when_job_fails(self) -> None:
+        failed_entry = _Entry(job_id="job-123", state="failed", summary="pipeline error: whisper timed out")
+
+        with patch("windows_client.gui.main_window.load_job_result", return_value=failed_entry):
+            self.window._poll_current_job_result()
+
+        self.assertIn("Processing failed", self.window.result_summary.text())
+        self.assertFalse(self.window._result_poll_timer.isActive())
+
     def test_render_success_fails_fast_for_wechat_gate_page_result(self) -> None:
         metadata_path = self.window._current_state.job.metadata_path
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +203,27 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(state, "failed")
         self.assertIn("验证", self.window.result_summary.text())
         self.assertFalse(self.window.retry_button.isHidden())
+
+    def test_refresh_current_job_result_fails_when_job_disappears_from_workspace(self) -> None:
+        self.window._current_state = OperationViewState(
+            operation="export-url-job",
+            status="success",
+            summary="queued",
+            job=JobExportSnapshot(
+                job_id="job-missing",
+                job_dir=self.shared_root / "incoming" / "job-missing",
+                payload_path=self.shared_root / "incoming" / "job-missing" / "payload.html",
+                metadata_path=self.shared_root / "incoming" / "job-missing" / "metadata.json",
+                ready_path=self.shared_root / "incoming" / "job-missing" / "READY",
+            ),
+        )
+
+        with patch("windows_client.gui.main_window.load_job_result", return_value=None):
+            state = self.window._refresh_current_job_result(from_auto_poll=True)
+
+        self.assertEqual(state, "failed")
+        self.assertIn("未找到", self.window.result_summary.text())
+        self.assertFalse(self.window._result_poll_timer.isActive())
 
     def test_video_download_controls_show_for_video_routes_only(self) -> None:
         self.window._sync_video_download_controls("https://www.bilibili.com/video/BV1demo/")
@@ -289,6 +329,46 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertEqual(self.window.footer_label.text(), "提交失败：disk full")
 
+    def test_reset_then_submit_local_payload_rebinds_to_new_job(self) -> None:
+        from windows_client.app.input_router import TextPayload
+
+        self.window._current_url = "https://mp.weixin.qq.com/s/old"
+        self.window._current_route = type("Route", (), {"display_name": "WeChat Article", "is_video": False})()
+        self.window._current_state = OperationViewState(
+            operation="export-url-job",
+            status="success",
+            summary="old",
+            job=JobExportSnapshot(
+                job_id="job-old",
+                job_dir=self.shared_root / "incoming" / "job-old",
+                payload_path=self.shared_root / "incoming" / "job-old" / "payload.html",
+                metadata_path=self.shared_root / "incoming" / "job-old" / "metadata.json",
+                ready_path=self.shared_root / "incoming" / "job-old" / "READY",
+            ),
+        )
+        self.window._result_poll_timer.start(1000)
+        self.window.domain_label.setText("mp.weixin.qq.com")
+        self.window.platform_label.setText("WeChat Article")
+        self.window.stage_label.setText("AI 正在分析中...")
+        self.window.result_summary.setText("Queued for analysis.")
+        self.window.result_summary.show()
+
+        self.window._reset_to_ready_state()
+
+        with patch("windows_client.gui.main_window.submit_local", return_value="job-new"):
+            with patch.object(self.window, "_start_result_polling") as start_polling:
+                self.window._submit_local_payload(TextPayload(text="这是一段很长的文章内容" * 10))
+
+        self.assertEqual(self.window._current_state.job.job_id, "job-new")
+        self.assertFalse(self.window._result_poll_timer.isActive())
+        self.assertEqual(self.window._current_url, "")
+        self.assertIsNone(self.window._current_route)
+        self.assertEqual(self.window.domain_label.text(), "本地文本")
+        self.assertEqual(self.window.platform_label.text(), "本地内容")
+        self.assertEqual(self.window.stage_label.text(), "AI 正在分析中…")
+        self.assertEqual(self.window.result_summary.text(), "本地内容已提交，正在分析中…")
+        start_polling.assert_called_once_with()
+
     def test_drop_event_routes_local_file_to_local_submission(self) -> None:
         pdf = Path(self.temp_dir.name) / "drop.pdf"
         pdf.write_bytes(b"%PDF-1.4")
@@ -334,11 +414,22 @@ class MainWindowTests(unittest.TestCase):
     def test_event_filter_routes_clipboard_image_to_local_submission(self) -> None:
         image = QImage(2, 2, QImage.Format_ARGB32)
         image.fill(Qt.red)
-        QApplication.clipboard().setImage(image)
         event = QKeyEvent(QEvent.KeyPress, Qt.Key_V, Qt.ControlModifier)
 
-        with patch.object(self.window, "_submit_local_payload") as submit_payload:
-            handled = self.window.eventFilter(self.window.url_input, event)
+        class _Mime:
+            def hasImage(self) -> bool:
+                return True
+
+        class _Clipboard:
+            def mimeData(self):
+                return _Mime()
+
+            def image(self):
+                return image
+
+        with patch("PySide6.QtWidgets.QApplication.clipboard", return_value=_Clipboard()):
+            with patch.object(self.window, "_submit_local_payload") as submit_payload:
+                handled = self.window.eventFilter(self.window.url_input, event)
 
         self.assertTrue(handled)
         payload = submit_payload.call_args.args[0]

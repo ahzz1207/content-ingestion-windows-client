@@ -78,6 +78,71 @@ class InlineResultViewTests(unittest.TestCase):
         self.assertFalse(view.open_library_button.isHidden())
         self.assertTrue(view.open_library_button.isEnabled())
 
+    def test_copy_title_button_copies_hero_title(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.title = "这是标题"
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+        view._copy_title()
+
+        self.assertEqual(QApplication.clipboard().text(), "这是标题")
+        self.assertEqual(view._title_copy_btn.text(), "已复制")
+
+    def test_copy_take_button_copies_hero_take(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.summary = "这是摘要内容"
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+        view._copy_take()
+
+        self.assertEqual(QApplication.clipboard().text(), "这是摘要内容")
+        self.assertEqual(view._take_copy_btn.text(), "已复制")
+
+    def test_take_copy_button_hides_when_take_is_hidden(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+        entry.title = "同一段摘要文本"
+        entry.summary = "同一段摘要文本"
+
+        view.load_entry(entry, brief=None, resolved_mode="argument")
+
+        self.assertTrue(view._hero_take.isHidden())
+        self.assertTrue(view._take_copy_btn.isHidden())
+
+    def test_copy_image_button_copies_current_pixmap(self) -> None:
+        view = InlineResultView()
+        entry = _make_entry()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            png_path = Path(temp_dir) / "insight_card.png"
+            image = QImage(2, 2, QImage.Format_ARGB32)
+            image.fill(QColor("#3a67d6"))
+            image.save(str(png_path), "PNG")
+            entry.details = {"visual_findings": [], "insight_card_path": png_path}
+
+            view.load_entry(entry, brief=None, resolved_mode="argument")
+            view._copy_image_to_clipboard()
+
+        self.assertFalse(QApplication.clipboard().pixmap().isNull())
+        self.assertEqual(view._card_copy_btn.text(), "已复制")
+
+    def test_copy_image_button_disabled_without_image(self) -> None:
+        view = InlineResultView()
+
+        view.load_entry(_make_entry(), brief=None, resolved_mode="argument")
+
+        self.assertFalse(view._card_copy_btn.isEnabled())
+
+    def test_result_view_exposes_inline_copy_actions_with_expected_labels(self) -> None:
+        view = InlineResultView()
+
+        self.assertEqual(view._title_copy_btn.text(), "复制")
+        self.assertEqual(view._take_copy_btn.text(), "复制")
+        self.assertEqual(view._card_copy_btn.text(), "复制图片")
+        self.assertEqual(view._copy_btn.text(), "复制")
+
     def test_local_file_entry_hides_raw_file_url_in_hero_source(self) -> None:
         view = InlineResultView()
         entry = _make_entry()
