@@ -1178,14 +1178,17 @@ class MainWindow(QMainWindow):
         self._set_pills(pills)
 
     def _poll_watcher_status(self) -> None:
-        """Lightweight periodic check — only re-fetches watcher state (no WSL subprocess)."""
-        try:
-            watcher_status = self.wsl_bridge.watch_status()
-        except Exception:
-            watcher_status = None
-        running = watcher_status.get("running") == "True" if watcher_status else False
-        if running != self._watcher_running:
-            self._launch_status_refresh()
+        """Periodic watcher-liveness probe. Runs the tasklist check off the GUI thread."""
+        def _worker() -> None:
+            try:
+                watcher_status = self.wsl_bridge.watch_status()
+            except Exception:
+                watcher_status = None
+            running = watcher_status.get("running") == "True" if watcher_status else False
+            if running != self._watcher_running:
+                self._launch_status_refresh()
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _refresh_environment_status(self) -> None:
         self._launch_status_refresh()
