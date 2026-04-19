@@ -2,10 +2,9 @@ import os
 import sys
 from pathlib import Path
 
-if getattr(sys, "frozen", False) and os.name == "nt" and "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(
-        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ms-playwright"
-    )
+if getattr(sys, "frozen", False) and os.name == "nt":
+    localappdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path(localappdata) / "ms-playwright")
 
 from windows_client.gui.app import launch_gui
 
