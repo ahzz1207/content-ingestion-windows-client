@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from windows_client.app.errors import WindowsClientError
 from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
 from windows_client.app.service import ReinterpretRequest
 from windows_client.app.view_models import JobExportSnapshot, OperationViewState
@@ -481,6 +482,7 @@ class MainWindow(QMainWindow):
         self.result_inline.reanalyze_requested.connect(self._reanalyze_url)
         self.result_inline.reinterpret_requested.connect(self._prompt_reinterpretation)
         self.result_inline.save_to_library_requested.connect(self._save_latest_result_to_library)
+        self.result_inline.sync_to_obsidian_requested.connect(self._sync_latest_result_to_obsidian)
         self.result_inline.open_library_requested.connect(self._open_library)
         self.result_inline.open_library_entry_requested.connect(self._open_library_entry)
         self.result_inline.history_button.clicked.connect(self._open_history_from_result)
@@ -1632,6 +1634,20 @@ class MainWindow(QMainWindow):
         self._task_thread = None
         self.footer_label.setText("Automatic platform detection and browser guidance are enabled.")
         QMessageBox.warning(self, "Reinterpretation failed", message)
+
+    def _sync_latest_result_to_obsidian(self) -> None:
+        from windows_client.app.obsidian_trigger import trigger_obsidian_import
+
+        entry = self._latest_result_entry
+        if entry is None or not entry.job_id:
+            self.footer_label.setText("暂无可同步的结果。")
+            return
+        try:
+            trigger_obsidian_import(entry.job_id)
+        except WindowsClientError as exc:
+            self.footer_label.setText(f"打开 Obsidian 失败：{exc}")
+            return
+        self.footer_label.setText("已发送到 Obsidian，请切换查看导入结果。")
 
     def _save_latest_result_to_library(self) -> None:
         entry = self._latest_result_entry

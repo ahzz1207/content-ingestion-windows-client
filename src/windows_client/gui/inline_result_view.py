@@ -90,6 +90,7 @@ class InlineResultView(QWidget):
     reanalyze_requested = Signal(str)  # emits source_url
     reinterpret_requested = Signal()
     save_to_library_requested = Signal()
+    sync_to_obsidian_requested = Signal()
     open_library_requested = Signal()
     open_library_entry_requested = Signal(str)
 
@@ -127,6 +128,11 @@ class InlineResultView(QWidget):
         self._save_to_library_btn.clicked.connect(self.save_to_library_requested.emit)
         self._save_to_library_btn.hide()
         self._save_to_library_btn.setEnabled(False)
+        self._sync_obsidian_btn = QPushButton("同步到 Obsidian")
+        self._sync_obsidian_btn.setObjectName("GhostButton")
+        self._sync_obsidian_btn.clicked.connect(self.sync_to_obsidian_requested.emit)
+        self._sync_obsidian_btn.hide()
+        self._sync_obsidian_btn.setEnabled(False)
         self._open_library_btn = QPushButton("知识库")
         self._open_library_btn.setObjectName("GhostButton")
         self._open_library_btn.clicked.connect(self.open_library_requested.emit)
@@ -239,6 +245,7 @@ class InlineResultView(QWidget):
         hero_action_layout.addWidget(self._reanalyze_btn)
         hero_action_layout.addWidget(self._reinterpret_btn)
         hero_action_layout.addWidget(self._save_to_library_btn)
+        hero_action_layout.addWidget(self._sync_obsidian_btn)
         hero_action_layout.addWidget(self._open_library_btn)
         hero_action_layout.addStretch(1)
         hero_topbar_layout.addStretch(1)
@@ -608,6 +615,8 @@ class InlineResultView(QWidget):
         self._reinterpret_btn.setEnabled(entry.state == "processed")
         self._save_to_library_btn.setVisible(True)
         self._save_to_library_btn.setEnabled(entry.state == "processed")
+        self._sync_obsidian_btn.setVisible(True)
+        self._sync_obsidian_btn.setEnabled(entry.state == "processed")
         self._open_library_btn.setVisible(True)
 
         if brief is not None:

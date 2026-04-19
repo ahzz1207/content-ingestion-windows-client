@@ -380,6 +380,15 @@ export default class ContentIngestionPlugin extends Plugin {
       await this.activateStatusView();
     });
 
+    this.registerObsidianProtocolHandler("content-ingestion-import", async (params) => {
+      const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
+      if (!jobId) {
+        new Notice("content-ingestion-import: missing jobId");
+        return;
+      }
+      await this.importCompletedJob(jobId);
+    });
+
     this.addSettingTab(new ContentIngestionSettingTab(this.app, this));
   }
 
