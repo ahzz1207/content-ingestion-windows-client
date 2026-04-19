@@ -166,8 +166,12 @@ class LibraryStoreTests(unittest.TestCase):
 
         saved = self.store.save_entry(entry)
 
-        self.assertEqual(saved.current_interpretation.summary_headline, "Normalized headline")
-        self.assertEqual(saved.current_interpretation.summary_short_text, "Normalized short text")
+        # summary_headline/short_text now prefer the new product_view.hero
+        # fields (short label + mode-specific dek) over the legacy
+        # summary.headline/short_text. The legacy fields remain available
+        # in the raw payload as a fallback for callers that need them.
+        self.assertEqual(saved.current_interpretation.summary_headline, "Normalized hero")
+        self.assertEqual(saved.current_interpretation.summary_short_text, "Normalized dek")
         self.assertEqual(saved.current_interpretation.payload["product_view"]["hero"]["title"], "Normalized hero")
         self.assertEqual(saved.current_interpretation.payload["structured_result"]["summary"]["headline"], "Normalized headline")
 

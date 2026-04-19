@@ -372,6 +372,10 @@ class LibraryStore:
                 path=Path(asset_payload["path"]),
             )
         summary = payload.get("summary") or {}
+        product_view = payload.get("product_view") if isinstance(payload.get("product_view"), dict) else {}
+        product_hero = product_view.get("hero") if isinstance(product_view.get("hero"), dict) else {}
+        product_title = str(product_hero.get("title") or "").strip() or None
+        product_dek = str(product_hero.get("dek") or "").strip() or None
         return LibraryInterpretation(
             interpretation_id=payload["interpretation_id"],
             state=payload["state"],
@@ -380,8 +384,8 @@ class LibraryStore:
             saved_at=payload["saved_at"],
             trashed_at=payload.get("trashed_at"),
             trash_reason=payload.get("trash_reason"),
-            summary_headline=summary.get("headline"),
-            summary_short_text=summary.get("short_text"),
+            summary_headline=product_title or summary.get("headline"),
+            summary_short_text=product_dek or summary.get("short_text"),
             image_summary_asset=asset,
             payload=payload,
         )
