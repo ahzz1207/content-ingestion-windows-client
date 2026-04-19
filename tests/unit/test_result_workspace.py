@@ -10,9 +10,33 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from windows_client.app.result_workspace import _looks_unreadable_text, list_recent_results, load_job_result, load_latest_result
+from windows_client.app.errors import WindowsClientError
+from windows_client.app.result_workspace import _looks_unreadable_text, list_recent_results, load_job_result, load_latest_result, validate_job_id
 from windows_client.app.service import ReinterpretRequest, WindowsClientService
 from windows_client.config.settings import Settings
+
+
+class ValidateJobIdTests(unittest.TestCase):
+    def test_accepts_normal_job_ids(self) -> None:
+        for ok in ("20260412_140643_d1f07c", "20260412_140643_d1f07c--reinterpret-01", "job_abc-123"):
+            self.assertEqual(validate_job_id(ok), ok)
+
+    def test_rejects_path_traversal(self) -> None:
+        for bad in ("../escape", "..\\escape", "a/../b", "a\\b", "..", "./hidden"):
+            with self.subTest(job_id=bad):
+                with self.assertRaises(WindowsClientError) as ctx:
+                    validate_job_id(bad)
+                self.assertEqual(ctx.exception.code, "invalid_job_id")
+
+    def test_rejects_empty_or_too_long(self) -> None:
+        with self.assertRaises(WindowsClientError):
+            validate_job_id("")
+        with self.assertRaises(WindowsClientError):
+            validate_job_id("a" * 201)
+
+    def test_load_job_result_rejects_traversal(self) -> None:
+        with self.assertRaises(WindowsClientError):
+            load_job_result(Path("/tmp/whatever"), "../etc/passwd")
 
 
 def _question_driven_product_view() -> dict[str, object]:

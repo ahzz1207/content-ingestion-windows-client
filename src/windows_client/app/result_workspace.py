@@ -7,12 +7,42 @@ from pathlib import Path
 from typing import Any
 
 from windows_client.app.coverage_stats import CoverageStats, compute_coverage
+from windows_client.app.errors import WindowsClientError
 from windows_client.app.evidence_resolver import (
     EvidenceSnippet,
     load_evidence_index,
     resolve_evidence_for_item,
 )
 from windows_client.app.insight_brief import InsightBriefV2, adapt_from_structured_result
+
+
+_MAX_JOB_ID_LENGTH = 200
+
+
+def validate_job_id(job_id: str) -> str:
+    """Reject job_ids that could escape the shared_inbox root via path traversal."""
+    if not isinstance(job_id, str) or not job_id:
+        raise WindowsClientError(
+            "invalid_job_id",
+            "job_id must be a non-empty string",
+            stage="job_id_validation",
+            details={"job_id": repr(job_id)},
+        )
+    if len(job_id) > _MAX_JOB_ID_LENGTH:
+        raise WindowsClientError(
+            "invalid_job_id",
+            f"job_id too long (max {_MAX_JOB_ID_LENGTH} chars)",
+            stage="job_id_validation",
+            details={"job_id_length": len(job_id)},
+        )
+    if "/" in job_id or "\\" in job_id or ".." in job_id or job_id.startswith("."):
+        raise WindowsClientError(
+            "invalid_job_id",
+            "job_id contains unsafe path characters",
+            stage="job_id_validation",
+            details={"job_id": job_id},
+        )
+    return job_id
 
 
 @dataclass(slots=True)
@@ -41,6 +71,7 @@ class ResultWorkspaceEntry:
 
 
 def load_job_result(shared_root: Path, job_id: str) -> ResultWorkspaceEntry | None:
+    validate_job_id(job_id)
     processed_dir = _resolve_processed_job_dir(shared_root, job_id)
     if processed_dir.exists():
         return _load_processed_result(processed_dir)

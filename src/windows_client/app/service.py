@@ -293,7 +293,9 @@ class WindowsClientService:
                 processed_root=processed_root,
                 active_job_id=target_job_id,
             )
-        except OSError as exc:
+        except WindowsClientError:
+            raise
+        except Exception as exc:
             raise WindowsClientError(
                 "reinterpretation_failed",
                 f"failed to create reinterpretation for {base_job_id}",

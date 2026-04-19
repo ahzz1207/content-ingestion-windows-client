@@ -16,7 +16,7 @@ from windows_client.api.models import (
 )
 from windows_client.app.coverage_stats import CoverageStats
 from windows_client.app.insight_brief import InsightBriefV2, ViewpointItem
-from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result
+from windows_client.app.result_workspace import ResultWorkspaceEntry, load_job_result, validate_job_id
 from windows_client.app.service import WindowsClientService
 
 STATUS_TO_DIR = {
@@ -77,6 +77,7 @@ class JobManager:
         )
 
     def get_job(self, job_id: str) -> JobRecord | None:
+        validate_job_id(job_id)
         for status in ("queued", "processing", "completed", "failed", "archived"):
             job_dir = self.shared_inbox_root / STATUS_TO_DIR[status] / job_id
             if job_dir.exists() and job_dir.is_dir():
@@ -84,6 +85,7 @@ class JobManager:
         return None
 
     def archive_job(self, job_id: str) -> JobRecord | None:
+        validate_job_id(job_id)
         record = self.get_job(job_id)
         if record is None or record.job_dir is None:
             return None
